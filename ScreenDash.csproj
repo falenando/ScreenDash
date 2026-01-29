@@ -6,9 +6,30 @@
     <Nullable>enable</Nullable>
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
-    <Version>1.0.0</Version>
-    <Platforms>AnyCPU;x64</Platforms>
+    <Version>1.0.2</Version>
+    <AssemblyVersion>1.0.2.0</AssemblyVersion>
+    <FileVersion>1.0.2.0</FileVersion>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+      <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
   </PropertyGroup>
+
+  <ItemGroup>
+	  <!-- Evita que arquivos dos subprojetos sejam compilados dentro do projeto raiz -->
+	  <Compile Remove="HostApp\**\*.cs" />
+	  <Compile Remove="ViewerApp\**\*.cs" />
+	  <Compile Remove="RemoteCore\**\*.cs" />
+
+	  <!-- Remove recursos/embedded gerados dentro das subpastas (se houver) -->
+	  <EmbeddedResource Remove="HostApp\**\*" />
+	  <EmbeddedResource Remove="ViewerApp\**\*" />
+	  <None Remove="HostApp\**\*" />
+	  <None Remove="ViewerApp\**\*" />
+	  <None Remove="RemoteCore\**\*" />  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="RemoteCore\AccessCodeService.cs" />
+    <Compile Include="RemoteCore\Base32Custom.cs" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Velopack" Version="0.0.1298" />

@@ -1,4 +1,6 @@
 using Velopack;
+using Velopack.Sources;
+using System.Net;
 using System;
 using System.Linq;
 using System.Threading.Tasks;
@@ -12,31 +14,51 @@ namespace ScreenDash
         {
             InitializeComponent();
         }
+        private void btnOpenSupportShare_Click(object? sender, EventArgs e)
+        {
+            using var f = new SupportShareForm();
+            f.ShowDialog(this);
+        }
+
+        private void btnOpenRemoteAssist_Click(object? sender, EventArgs e)
+        {
+            using var f = new RemoteAssistForm();
+            f.ShowDialog(this);
+        }
 
         private async void btnCheckUpdates_Click(object sender, EventArgs e)
         {
-            BtnCheckUpdates.Enabled = false;
-            BtnCheckUpdates.Text = "Verificando...";
+            btnCheckUpdates.Enabled = false;
+            btnCheckUpdates.Text = "Verificando...";
 
-            var manager = new UpdateManager("https://seu-servidor/releases");
-
-            var update = await manager.CheckForUpdatesAsync();
-
-            if (update == null)
+            try
             {
-                MessageBox.Show("No updates available.");
-                return;
+                var source = new GithubSource("https://github.com/falenando/ScreenDash", accessToken: null, prerelease: false);
+
+                var manager = new UpdateManager(source);
+
+                var update = await manager.CheckForUpdatesAsync();
+
+                if (update == null)
+                {
+                    MessageBox.Show("Nenhuma atualização disponível.");
+                    return;
+                }
+
+                await manager.DownloadUpdatesAsync(update);
+                manager.ApplyUpdatesAndRestart(update);
             }
-
-            await manager.DownloadUpdatesAsync(update);
-
-            // AQUI está a correção
-            manager.ApplyUpdatesAndRestart(update);
-
-            BtnCheckUpdates.Enabled = true;
-            BtnCheckUpdates.Text = "Buscar atualizações";
-        }
-
-        
+            catch (Exception ex)
+            {
+                MessageBox.Show(
+                    "Erro ao verificar atualizações:\n\n" + ex.Message
+                );
+            }
+            finally
+            {
+                btnCheckUpdates.Enabled = true;
+                btnCheckUpdates.Text = "Buscar atualizações";
+            }
+        }        
     }
 }
