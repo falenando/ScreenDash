@@ -15,7 +15,7 @@ namespace HostApp
         private void InitializeComponent()
         {
             lblTitle = new Label();
-            txtLocalIp = new TextBox();
+            txtTokenRemoto = new TextBox();
             lblYourAccess = new Label();
             btnCopyCode = new Button();
             btnStart = new Button();
@@ -39,17 +39,16 @@ namespace HostApp
             lblTitle.TabIndex = 0;
             lblTitle.Text = "Support Share";
             // 
-            // txtLocalIp
+            // txtTokenRemoto
             // 
-            txtLocalIp.Font = new Font("Consolas", 18F);
-            txtLocalIp.Location = new Point(14, 61);
-            txtLocalIp.Name = "txtLocalIp";
-            txtLocalIp.ReadOnly = true;
-            txtLocalIp.Size = new Size(306, 43);
-            txtLocalIp.TabIndex = 1;
-            txtLocalIp.Text = "123 456 789 XYZ";
-            txtLocalIp.TextAlign = HorizontalAlignment.Center;
-            txtLocalIp.TextChanged += txtLocalIp_TextChanged;
+            txtTokenRemoto.Font = new Font("Consolas", 18F);
+            txtTokenRemoto.Location = new Point(14, 61);
+            txtTokenRemoto.Name = "txtTokenRemoto";
+            txtTokenRemoto.ReadOnly = true;
+            txtTokenRemoto.Size = new Size(306, 43);
+            txtTokenRemoto.TabIndex = 1;
+            txtTokenRemoto.Text = "123 456 789 XYZ";
+            txtTokenRemoto.TextAlign = HorizontalAlignment.Center;
             // 
             // lblYourAccess
             // 
@@ -148,12 +147,15 @@ namespace HostApp
             Controls.Add(btnStart);
             Controls.Add(btnCopyCode);
             Controls.Add(lblYourAccess);
-            Controls.Add(txtLocalIp);
+            Controls.Add(txtTokenRemoto);
             Controls.Add(lblTitle);
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
             Name = "HostForm";
             Text = "Support Share";
+            // initial status: not ready
+            pbStatus.BackColor = System.Drawing.Color.Red;
+            lblStatus.Text = "Not ready to connect";
             panelStatus.ResumeLayout(false);
             panelStatus.PerformLayout();
             ((System.ComponentModel.ISupportInitialize)pbStatus).EndInit();
@@ -162,7 +164,7 @@ namespace HostApp
         }
 
         private System.Windows.Forms.Label lblTitle;
-        private System.Windows.Forms.TextBox txtLocalIp;
+        private System.Windows.Forms.TextBox txtTokenRemoto;
         private System.Windows.Forms.Label lblYourAccess;
         private System.Windows.Forms.Button btnCopyCode;
         private System.Windows.Forms.Button btnStart;

@@ -90,5 +90,46 @@ namespace RemoteCore
 
             return outBytes.ToArray();
         }
+
+        // Encode a sequence of bits (0/1) into Base32 string. Bits are ordered MSB first.
+        public static string EncodeBits(IList<int> bits)
+        {
+            if (bits == null || bits.Count == 0)
+                return string.Empty;
+
+            // pad to multiple of 5
+            var padded = new List<int>(bits);
+            while (padded.Count % 5 != 0)
+                padded.Add(0);
+
+            var outChars = new List<char>(padded.Count / 5);
+            for (int i = 0; i < padded.Count; i += 5)
+            {
+                int val = 0;
+                for (int j = 0; j < 5; j++)
+                    val = (val << 1) | (padded[i + j] & 1);
+                outChars.Add(Alphabet[val]);
+            }
+
+            return new string(outChars.ToArray());
+        }
+
+        // Decode text into a list of bits (each 0 or 1). Returned length = text.Length * 5.
+        public static List<int> DecodeToBits(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return new List<int>();
+
+            text = text.Trim().ToUpperInvariant();
+            var bits = new List<int>(text.Length * 5);
+            foreach (var c in text)
+            {
+                if (!_reverse.TryGetValue(c, out var v))
+                    throw new FormatException($"Invalid Base32 character: '{c}'");
+                for (int i = 4; i >= 0; i--)
+                    bits.Add((v >> i) & 1);
+            }
+            return bits;
+        }
     }
 }

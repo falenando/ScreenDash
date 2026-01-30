@@ -82,6 +82,7 @@ namespace ViewerApp
             btnDisconnect.TabIndex = 12;
             btnDisconnect.Text = "Disconnect";
             btnDisconnect.UseVisualStyleBackColor = true;
+            btnDisconnect.Click += btnDisconnect_Click;
             // 
             // panelStatus
             // 

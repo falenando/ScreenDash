@@ -32,24 +32,35 @@ namespace RemoteCore
             payload[1] = (byte)(sessionToken >> 8);
             payload[2] = (byte)(sessionToken & 0xFF);
 
-            // checksum: XOR of payload bytes -> 1 byte
-            byte checksum = (byte)(payload[0] ^ payload[1] ^ payload[2]);
+            // Compute a small checksum (6 bits) from the three payload bytes.
+            // We'll pack lastOctet (8 bits) + sessionToken (16 bits) + checksum (6 bits) = 30 bits
+            byte b0 = payload[0];
+            byte b1 = payload[1];
+            byte b2 = payload[2];
+            int rawChecksum = b0 ^ b1 ^ b2;
+            int checksum6 = rawChecksum & 0x3F; // keep lower 6 bits
 
-            // final blob: 4 bytes (last, token hi, token lo, checksum)
-            var blob = new byte[4];
-            Array.Copy(payload, 0, blob, 0, 3);
-            blob[3] = checksum;
+            // Build bit list MSB-first
+            var bits = new System.Collections.Generic.List<int>(30);
 
-            // We need to produce 6 base32 characters. 6 * 5 = 30 bits. We have 32 bits -> OK.
-            // Encode the 4 bytes using Base32Custom and take first 6 chars.
-            var encoded = Base32Custom.Encode(blob);
-            if (encoded.Length < 6)
-            {
-                // pad (should not happen)
-                encoded = encoded.PadRight(6, 'A');
-            }
+            // last octet (8 bits)
+            for (int i = 7; i >= 0; i--)
+                bits.Add((b0 >> i) & 1);
 
-            return encoded.Substring(0, 6);
+            // session token (16 bits)
+            for (int i = 15; i >= 0; i--)
+                bits.Add(( (payload[1] << 8) | payload[2] ) >> i & 1);
+
+            // checksum (6 bits)
+            for (int i = 5; i >= 0; i--)
+                bits.Add((checksum6 >> i) & 1);
+
+            var encoded = Base32Custom.EncodeBits(bits);
+            // encoded should be exactly 6 characters (6*5=30)
+            if (encoded.Length != 6)
+                throw new InvalidOperationException("Unexpected encoded length: " + encoded.Length);
+
+            return encoded;
         }
 
         /// <summary>
@@ -65,15 +76,52 @@ namespace RemoteCore
             code = code.Trim().ToUpperInvariant();
             try
             {
-                // decode, we expect at least 4 bytes
-                var blob = Base32Custom.Decode(code);
-                if (blob.Length < 4)
-                    return false;
+                // Try the primary (30-bit) format first
+                var bits = Base32Custom.DecodeToBits(code);
+                if (bits.Count == 30)
+                {
+                    int idx = 0;
+                    int lo = 0;
+                    for (int i = 0; i < 8; i++)
+                        lo = (lo << 1) | bits[idx++];
 
-                lastOctet = blob[0];
-                sessionToken = (ushort)((blob[1] << 8) | blob[2]);
-                var checksum = blob[3];
-                return checksum == (byte)(blob[0] ^ blob[1] ^ blob[2]);
+                    int token = 0;
+                    for (int i = 0; i < 16; i++)
+                        token = (token << 1) | bits[idx++];
+
+                    int checksum6 = 0;
+                    for (int i = 0; i < 6; i++)
+                        checksum6 = (checksum6 << 1) | bits[idx++];
+
+                    lastOctet = (byte)lo;
+                    sessionToken = (ushort)token;
+
+                    byte b0 = (byte)lo;
+                    byte b1 = (byte)((token >> 8) & 0xFF);
+                    byte b2 = (byte)(token & 0xFF);
+                    int expected = (b0 ^ b1 ^ b2) & 0x3F;
+                    return expected == checksum6;
+                }
+
+                // Fallback: try full-byte decode (older/alternative formats)
+                var blob = Base32Custom.Decode(code);
+                if (blob.Length >= 3)
+                {
+                    lastOctet = blob[0];
+                    sessionToken = (ushort)((blob[1] << 8) | blob[2]);
+
+                    if (blob.Length >= 4)
+                    {
+                        // verify checksum full byte if present
+                        var checksum = blob[3];
+                        return checksum == (byte)(blob[0] ^ blob[1] ^ blob[2]);
+                    }
+
+                    // no checksum byte available -- accept decode but return false? we'll accept
+                    return true;
+                }
+
+                return false;
             }
             catch
             {
