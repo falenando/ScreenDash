@@ -1,5 +1,6 @@
 using RemoteCore;
 using System;
+using System.Drawing;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -13,21 +14,27 @@ namespace ViewerApp
         private const int Port = 5050;
         private readonly ConnectionLogger _logger = new ConnectionLogger("viewer.log");
 
+        private Socket? _socket;
+        private bool _isStreaming = false;
+
         public ViewerForm()
         {
             InitializeComponent();
+
             try
             {
                 AppendLog("Detecting local IPv4...");
                 var localIp = NetworkHelper.GetLocalIPv4().ToString();
                 AppendLog("Local IP: " + localIp);
-                // ensure disconnect button starts as Quit
-                btnDisconnect.Text = "Quit";
             }
             catch (Exception ex)
             {
                 AppendLog("Initialization error: " + ex.Message);
             }
+
+            // ensure disconnect button starts as Quit
+            btnDisconnect.Text = "Quit";
+            btnDisconnect.Click += btnDisconnect_Click;
         }
 
         private async void btnConnect_Click(object sender, EventArgs e)
@@ -36,7 +43,6 @@ namespace ViewerApp
             try
             {
                 var input = txtAccessCode.Text.Trim().ToUpperInvariant();
-
                 AppendLog("Parsing access code / target input: " + input);
 
                 // Try decode as access code first
@@ -86,35 +92,139 @@ namespace ViewerApp
         private void btnDisconnect_Click(object? sender, EventArgs e)
         {
             // when not connected this acts as Quit
-            AppendLog("Quit requested from Disconnect/Quit button.");
-            Application.Exit();
+            if (_socket == null || !_socket.Connected)
+            {
+                AppendLog("Quit requested from Disconnect/Quit button.");
+                Application.Exit();
+                return;
+            }
+
+            // if connected, perform an ordered disconnect: send BYE and close
+            AppendLog("Disconnect requested by user. Sending BYE to host...");
+            try
+            {
+                var data = Encoding.UTF8.GetBytes("BYE");
+                _socket.Send(data);
+            }
+            catch { }
+
+            try { _socket.Shutdown(SocketShutdown.Both); } catch { }
+            try { _socket.Close(); } catch { }
+            _socket = null;
+            _isStreaming = false;
+            btnDisconnect.Text = "Quit";
+            AppendLog("Disconnected.");
         }
 
         private async Task ConnectToIpAsync(IPAddress ip)
         {
             AppendLog("Connecting to " + ip + ":" + Port);
             btnDisconnect.Text = "Disconn";
-            using var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-            var connectTask = socket.ConnectAsync(ip, Port);
+
+            _socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+            var connectTask = _socket.ConnectAsync(ip, Port);
             var timeout = Task.Delay(5000);
             var completed = await Task.WhenAny(connectTask, timeout);
             if (completed == timeout)
             {
                 AppendLog("Connect timeout to " + ip);
                 MessageBox.Show("Connect timeout");
+                _socket?.Close();
+                _socket = null;
+                btnDisconnect.Text = "Quit";
                 return;
             }
 
             AppendLog("Connected to " + ip);
-            btnDisconnect.Text = "Disconn";
-            using var peer = new TcpPeer(socket, _logger);
-            await peer.SendAsync("HELLO");
-            AppendLog("Sent HELLO");
-            var reply = await peer.ReceiveAsync();
-            AppendLog("Received: " + reply);
-            MessageBox.Show("Reply: " + reply);
-            // restore button
-            btnDisconnect.Text = "Disconn";
+            using var peer = new TcpPeer(_socket, _logger);
+
+            // request stream
+            await peer.SendAsync("REQUEST_STREAM");
+            AppendLog("Sent REQUEST_STREAM");
+
+            // start receiving frames
+            _isStreaming = true;
+            try
+            {
+                while (_isStreaming && _socket != null && _socket.Connected)
+                {
+                    // read 8-byte header
+                    var headerBuf = new byte[8];
+                    var hr = 0;
+                    while (hr < 8)
+                    {
+                        var r = await _socket.ReceiveAsync(headerBuf.AsMemory(hr, 8 - hr), SocketFlags.None);
+                        if (r == 0) throw new Exception("Disconnected");
+                        hr += r;
+                    }
+
+                    var header = Encoding.ASCII.GetString(headerBuf);
+                    if (!int.TryParse(header, out var len)) throw new Exception("Invalid header");
+
+                    var buf = new byte[len];
+                    var received = 0;
+                    while (received < len)
+                    {
+                        var chunk = await _socket.ReceiveAsync(buf.AsMemory(received, len - received), SocketFlags.None);
+                        if (chunk == 0) throw new Exception("Disconnected");
+                        received += chunk;
+                    }
+
+                    using var ms = new System.IO.MemoryStream(buf);
+                    var img = Image.FromStream(ms);
+                    ShowRemoteImage(img);
+                }
+            }
+            catch (Exception ex)
+            {
+                AppendLog("Screen receive ended: " + ex.Message);
+            }
+            finally
+            {
+                try { _socket?.Close(); } catch { }
+                _socket = null;
+                _isStreaming = false;
+                btnDisconnect.Text = "Quit";
+                // close preview window when stream ends
+                try
+                {
+                    if (_previewForm != null && !_previewForm.IsDisposed)
+                    {
+                        if (_previewForm.InvokeRequired)
+                            _previewForm.Invoke(() => _previewForm.Close());
+                        else
+                            _previewForm.Close();
+                    }
+                }
+                catch { }
+            }
+        }
+
+        private Form? _previewForm;
+        private PictureBox? _previewBox;
+
+        private void ShowRemoteImage(Image img)
+        {
+            if (_previewForm == null || _previewForm.IsDisposed)
+            {
+                _previewForm = new Form();
+                _previewForm.StartPosition = FormStartPosition.CenterParent;
+                _previewForm.FormBorderStyle = FormBorderStyle.Sizable;
+                _previewForm.ClientSize = new Size(1024, 768); // HD-ish window
+                _previewBox = new PictureBox();
+                _previewBox.Dock = DockStyle.Fill;
+                _previewBox.SizeMode = PictureBoxSizeMode.Zoom;
+                _previewForm.Controls.Add(_previewBox);
+                _previewForm.Show(this);
+            }
+
+            if (_previewBox != null)
+            {
+                if (_previewBox.InvokeRequired)
+                    _previewBox.Invoke(() => _previewBox.Image = (Image)img.Clone());
+                else
+                    _previewBox.Image = (Image)img.Clone();
+            }
         }
 
         private void AppendLog(string message)

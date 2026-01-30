@@ -22,7 +22,11 @@ namespace RemoteCore
         public async Task SendAsync(string text)
         {
             var data = Encoding.UTF8.GetBytes(text);
-            await _socket.SendAsync(data, SocketFlags.None);
+            var sent = 0;
+            while (sent < data.Length)
+            {
+                sent += await _socket.SendAsync(new ArraySegment<byte>(data, sent, data.Length - sent), SocketFlags.None);
+            }
         }
 
         public async Task<string> ReceiveAsync(int bufferSize = 8192)

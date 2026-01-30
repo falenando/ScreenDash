@@ -159,8 +159,33 @@ namespace HostApp
                         using var peer = new TcpPeer(socket, _logger);
                         var msg = await peer.ReceiveAsync();
                         AppendLog("Received: " + msg);
-                        await peer.SendAsync("WELCOME");
-                        AppendLog("Sent welcome reply.");
+
+                        // if client asked for screen stream start loop: send frames until disconnected
+                        if (msg == "REQUEST_STREAM")
+                        {
+                            AppendLog("Starting screen stream to " + socket.RemoteEndPoint);
+                            // send frames periodically
+                            for (int i = 0; i < 500 && socket.Connected; i++)
+                            {
+                                var jpg = ScreenStreamer.CaptureJpegBytes(quality: 50, maxWidth: 1024);
+                                // send length header as 8-digit ASCII
+                                var header = System.Text.Encoding.ASCII.GetBytes(jpg.Length.ToString("D8"));
+                                await peer.SendAsync(System.Text.Encoding.ASCII.GetString(header));
+                                // send raw bytes
+                                var sent = 0;
+                                while (sent < jpg.Length)
+                                {
+                                    sent += await socket.SendAsync(new ArraySegment<byte>(jpg, sent, jpg.Length - sent), SocketFlags.None);
+                                }
+                                await Task.Delay(200);
+                            }
+                            AppendLog("Finished streaming or client disconnected.");
+                        }
+                        else
+                        {
+                            await peer.SendAsync("WELCOME");
+                            AppendLog("Sent welcome reply.");
+                        }
                     }
                     catch (Exception ex)
                     {
