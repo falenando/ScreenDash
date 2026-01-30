@@ -10,7 +10,10 @@
     <AssemblyVersion>1.0.2.0</AssemblyVersion>
     <FileVersion>1.0.2.0</FileVersion>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+<<<<<<< HEAD
       <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+=======
+>>>>>>> fb78e0ad54faaaa7f0d5dae11d3bf5745ff81448
   </PropertyGroup>
 
   <ItemGroup>

@@ -16,6 +16,7 @@ namespace ScreenDash
         }
         private void btnOpenSupportShare_Click(object? sender, EventArgs e)
         {
+<<<<<<< HEAD
             using var f = new SupportShareForm();
             f.ShowDialog(this);
         }
@@ -31,6 +32,11 @@ namespace ScreenDash
             btnCheckUpdates.Enabled = false;
             btnCheckUpdates.Text = "Verificando...";
 
+=======
+            btnCheckUpdates.Enabled = false;
+            btnCheckUpdates.Text = "Verificando...";
+
+>>>>>>> fb78e0ad54faaaa7f0d5dae11d3bf5745ff81448
             try
             {
                 var source = new GithubSource("https://github.com/falenando/ScreenDash", accessToken: null, prerelease: false);
