@@ -11,7 +11,7 @@ namespace ViewerApp
 {
     public partial class ViewerForm : Form
     {
-        private const int Port = 5050;
+        private readonly int Port = RemoteCore.Config.GetPortFromFile("viewerconfig.json", 5050);
         private readonly ConnectionLogger _logger = new ConnectionLogger("viewer.log");
 
         private Socket? _socket;
@@ -59,6 +59,15 @@ namespace ViewerApp
                         var targetIp = new IPAddress(new byte[] { parts[0], parts[1], parts[2], lastOctet });
                         AppendLog("Resolved target IP: " + targetIp);
 
+                        // Verify same /24 network: ensure first 3 octets match
+                        var targetBytes = targetIp.GetAddressBytes();
+                        if (!(parts[0] == targetBytes[0] && parts[1] == targetBytes[1] && parts[2] == targetBytes[2]))
+                        {
+                            AppendLog("Access code resolves to a different network: " + targetIp);
+                            MessageBox.Show(RemoteCore.Localization.Get("DifferentNetworkCode"));
+                            return;
+                        }
+
                         await ConnectToIpAsync(targetIp);
                     }
                     else
@@ -70,6 +79,28 @@ namespace ViewerApp
                 else if (IPAddress.TryParse(input, out var explicitIp))
                 {
                     AppendLog("Input is a direct IP: " + explicitIp);
+
+                    // Verify explicit IP is on same /24 network as local viewer
+                    try
+                    {
+                        var local = NetworkHelper.GetLocalIPv4();
+                        var lp = local.GetAddressBytes();
+                        var ep = explicitIp.GetAddressBytes();
+                        if (lp.Length == 4 && ep.Length == 4)
+                        {
+                            if (!(lp[0] == ep[0] && lp[1] == ep[1] && lp[2] == ep[2]))
+                            {
+                                AppendLog("Explicit IP is in a different network: " + explicitIp);
+                                MessageBox.Show(RemoteCore.Localization.Get("DifferentNetworkIP"));
+                                return;
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        AppendLog("Error while validating explicit IP network: " + ex.Message);
+                    }
+
                     await ConnectToIpAsync(explicitIp);
                 }
                 else

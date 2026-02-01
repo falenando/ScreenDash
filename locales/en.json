@@ -1,0 +1,10 @@
+{
+  "ErrorFormat": "Error: {0}",
+  "InvalidInput": "Invalid input. Provide a 6-char access code or an IP address.",
+  "LocalIPv4Invalid": "Local IPv4 invalid; cannot resolve target IP.",
+  "DifferentNetworkCode": "Invalid code: host on a different network than yours (LAN /24 only).",
+  "DifferentNetworkIP": "Invalid IP: host on a different network than yours (LAN /24 only).",
+  "ConnectTimeout": "Connect timeout",
+  "ConfirmTerminate": "An active connection will be terminated. Do you want to continue?",
+  "Confirm": "Confirm"
+}

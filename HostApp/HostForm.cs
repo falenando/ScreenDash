@@ -10,7 +10,7 @@ namespace HostApp
 {
     public partial class HostForm : Form
     {
-        private const int Port = 5050;
+        private readonly int Port = RemoteCore.Config.GetPortFromFile("hostconfig.json", 5050);
         private readonly ConnectionLogger _logger = new ConnectionLogger("host.log");
         private TcpListener? _listener;
         private System.Threading.CancellationTokenSource? _cts;
@@ -164,8 +164,8 @@ namespace HostApp
                         if (msg == "REQUEST_STREAM")
                         {
                             AppendLog("Starting screen stream to " + socket.RemoteEndPoint);
-                            // send frames periodically
-                            for (int i = 0; i < 500 && socket.Connected; i++)
+                            // send frames periodically until client disconnects or listener is stopped
+                            while (socket.Connected && !ct.IsCancellationRequested)
                             {
                                 var jpg = ScreenStreamer.CaptureJpegBytes(quality: 50, maxWidth: 1024);
                                 // send length header as 8-digit ASCII
