@@ -29,7 +29,7 @@ namespace ViewerApp
             }
             catch (Exception ex)
             {
-                AppendLog("Initialization error: " + ex.Message);
+                AppendLog(Localization.Format("ErrorFormat", ex.Message));
             }
 
             // ensure disconnect button starts as Quit

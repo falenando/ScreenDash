@@ -33,5 +33,31 @@ namespace RemoteCore
 
             return defaultPort;
         }
+
+        public static string GetLanguageFromFile(string fileName, string defaultLanguage)
+        {
+            try
+            {
+                var baseDir = AppDomain.CurrentDomain.BaseDirectory;
+                var path = Path.Combine(baseDir, fileName);
+                if (!File.Exists(path))
+                    return defaultLanguage;
+
+                using var fs = File.OpenRead(path);
+                using var doc = JsonDocument.Parse(fs);
+                if (doc.RootElement.TryGetProperty("Language", out var el))
+                {
+                    var lang = el.GetString();
+                    if (!string.IsNullOrEmpty(lang))
+                        return lang;
+                }
+            }
+            catch
+            {
+                // ignore and use default
+            }
+
+            return defaultLanguage;
+        }
     }
 }

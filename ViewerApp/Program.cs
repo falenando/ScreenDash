@@ -1,5 +1,6 @@
 using System;
 using System.Windows.Forms;
+using RemoteCore;
 
 namespace ViewerApp
 {
@@ -10,6 +11,9 @@ namespace ViewerApp
         {
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
+
+            // Simple service registration for viewer (no DI container used)
+            var logger = new ConnectionLogger("viewer.log");
             Application.Run(new ViewerForm());
         }
     }

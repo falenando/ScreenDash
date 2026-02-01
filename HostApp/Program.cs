@@ -1,5 +1,6 @@
 using System;
 using System.Windows.Forms;
+using RemoteCore;
 
 namespace HostApp
 {
@@ -10,7 +11,13 @@ namespace HostApp
         {
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
-            Application.Run(new HostForm());
+
+            // Simple service registration / factory
+            var capturer = new RemoteCore.Implementations.ScreenCapturerDesktopDuplication();
+            var encoder = new RemoteCore.Implementations.JpegFrameEncoder(50, 1024);
+            var logger = new ConnectionLogger("host.log");
+
+            Application.Run(new HostForm(capturer, encoder, logger));
         }
     }
 }

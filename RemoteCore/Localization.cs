@@ -19,7 +19,22 @@ namespace RemoteCore
         {
             try
             {
-                var lang = CultureInfo.CurrentUICulture.TwoLetterISOLanguageName;
+                // Determine language: check app config first, fallback to system UI culture
+                var defaultLang = "en";
+                var appLang = defaultLang;
+                try
+                {
+                    // hostconfig.json or viewerconfig.json will be read by callers; try both and prefer a non-default
+                    var hostLang = Config.GetLanguageFromFile("hostconfig.json", defaultLang);
+                    var viewerLang = Config.GetLanguageFromFile("viewerconfig.json", defaultLang);
+                    if (!string.IsNullOrEmpty(hostLang) && hostLang != defaultLang)
+                        appLang = hostLang;
+                    else if (!string.IsNullOrEmpty(viewerLang) && viewerLang != defaultLang)
+                        appLang = viewerLang;
+                }
+                catch { appLang = defaultLang; }
+
+                var lang = string.IsNullOrEmpty(appLang) ? CultureInfo.CurrentUICulture.TwoLetterISOLanguageName : appLang;
                 string fileName = lang switch
                 {
                     "pt" => "pt.json",
