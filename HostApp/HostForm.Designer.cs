@@ -20,6 +20,7 @@ namespace HostApp
             btnCopyCode = new Button();
             btnStart = new Button();
             chkAllowRemoteInput = new CheckBox();
+            lblRemoteControlStatus = new Label();
             txtLog = new TextBox();
             panelStatus = new Panel();
             pbStatus = new PictureBox();
@@ -90,14 +91,24 @@ namespace HostApp
             chkAllowRemoteInput.Text = "Allow remote input";
             chkAllowRemoteInput.UseVisualStyleBackColor = true;
             // 
+            // lblRemoteControlStatus
+            // 
+            lblRemoteControlStatus.AutoSize = true;
+            lblRemoteControlStatus.ForeColor = Color.Gray;
+            lblRemoteControlStatus.Location = new Point(14, 206);
+            lblRemoteControlStatus.Name = "lblRemoteControlStatus";
+            lblRemoteControlStatus.Size = new Size(176, 20);
+            lblRemoteControlStatus.TabIndex = 9;
+            lblRemoteControlStatus.Text = "Remote control inactive";
+            // 
             // txtLog
             // 
-            txtLog.Location = new Point(14, 212);
+            txtLog.Location = new Point(14, 232);
             txtLog.Multiline = true;
             txtLog.Name = "txtLog";
             txtLog.ScrollBars = ScrollBars.Vertical;
-            txtLog.Size = new Size(306, 163);
-            txtLog.TabIndex = 9;
+            txtLog.Size = new Size(306, 143);
+            txtLog.TabIndex = 10;
             // 
             // panelStatus
             // 
@@ -106,7 +117,7 @@ namespace HostApp
             panelStatus.Location = new Point(14, 385);
             panelStatus.Name = "panelStatus";
             panelStatus.Size = new Size(220, 40);
-            panelStatus.TabIndex = 10;
+            panelStatus.TabIndex = 11;
             // 
             // pbStatus
             // 
@@ -131,7 +142,7 @@ namespace HostApp
             btnQuit.Location = new Point(250, 390);
             btnQuit.Name = "btnQuit";
             btnQuit.Size = new Size(70, 30);
-            btnQuit.TabIndex = 11;
+            btnQuit.TabIndex = 12;
             btnQuit.Text = "Quit";
             btnQuit.UseVisualStyleBackColor = true;
             // 
@@ -143,6 +154,7 @@ namespace HostApp
             Controls.Add(btnQuit);
             Controls.Add(panelStatus);
             Controls.Add(txtLog);
+            Controls.Add(lblRemoteControlStatus);
             Controls.Add(chkAllowRemoteInput);
             Controls.Add(btnStart);
             Controls.Add(btnCopyCode);
@@ -169,6 +181,7 @@ namespace HostApp
         private System.Windows.Forms.Button btnCopyCode;
         private System.Windows.Forms.Button btnStart;
         private System.Windows.Forms.CheckBox chkAllowRemoteInput;
+        private System.Windows.Forms.Label lblRemoteControlStatus;
         private System.Windows.Forms.TextBox txtLog;
         private System.Windows.Forms.Panel panelStatus;
         private System.Windows.Forms.PictureBox pbStatus;

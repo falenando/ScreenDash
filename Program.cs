@@ -14,6 +14,10 @@ namespace ScreenDash
             VelopackApp.Build()
                 .Run();
 
+            // Carrega as configurações de idioma antes de iniciar a UI
+            // Assumindo que este é o HostApp, usamos "hostconfig.json"
+            LocalizationManager.LoadLanguage("hostconfig.json");
+
             ApplicationConfiguration.Initialize();
             Application.Run(new Form1());
         }

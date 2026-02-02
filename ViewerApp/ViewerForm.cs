@@ -6,6 +6,7 @@ using System.Net.Sockets;
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using System.Globalization;
 
 namespace ViewerApp
 {
@@ -16,10 +17,13 @@ namespace ViewerApp
 
         private Socket? _socket;
         private bool _isStreaming = false;
+        private long _lastMouseMoveTick;
 
         public ViewerForm()
         {
+            ScreenDash.LocalizationManager.LoadLanguage("viewerconfig.json");
             InitializeComponent();
+            ApplyLocalization();
 
             try
             {
@@ -130,21 +134,7 @@ namespace ViewerApp
                 return;
             }
 
-            // if connected, perform an ordered disconnect: send BYE and close
-            AppendLog("Disconnect requested by user. Sending BYE to host...");
-            try
-            {
-                var data = Encoding.UTF8.GetBytes("BYE");
-                _socket.Send(data);
-            }
-            catch { }
-
-            try { _socket.Shutdown(SocketShutdown.Both); } catch { }
-            try { _socket.Close(); } catch { }
-            _socket = null;
-            _isStreaming = false;
-            btnDisconnect.Text = "Quit";
-            AppendLog("Disconnected.");
+            CloseConnection("Disconnect requested by user. Sending BYE to host...", sendBye: true);
         }
 
         private async Task ConnectToIpAsync(IPAddress ip)
@@ -242,9 +232,19 @@ namespace ViewerApp
                 _previewForm.StartPosition = FormStartPosition.CenterParent;
                 _previewForm.FormBorderStyle = FormBorderStyle.Sizable;
                 _previewForm.ClientSize = new Size(1024, 768); // HD-ish window
+                _previewForm.KeyPreview = true;
+                _previewForm.FormClosed += PreviewForm_FormClosed;
+                _previewForm.KeyDown += PreviewForm_KeyDown;
+                _previewForm.KeyUp += PreviewForm_KeyUp;
                 _previewBox = new PictureBox();
                 _previewBox.Dock = DockStyle.Fill;
                 _previewBox.SizeMode = PictureBoxSizeMode.Zoom;
+                _previewBox.TabStop = true;
+                _previewBox.MouseMove += PreviewBox_MouseMove;
+                _previewBox.MouseDown += PreviewBox_MouseDown;
+                _previewBox.MouseUp += PreviewBox_MouseUp;
+                _previewBox.MouseWheel += PreviewBox_MouseWheel;
+                _previewBox.MouseEnter += PreviewBox_MouseEnter;
                 _previewForm.Controls.Add(_previewBox);
                 _previewForm.Show(this);
             }
@@ -256,6 +256,170 @@ namespace ViewerApp
                 else
                     _previewBox.Image = (Image)img.Clone();
             }
+        }
+
+        private void PreviewForm_FormClosed(object? sender, FormClosedEventArgs e)
+        {
+            _previewForm = null;
+            _previewBox = null;
+            CloseConnection("Preview window closed. Disconnecting from host...", sendBye: true);
+        }
+
+        private void PreviewForm_KeyDown(object? sender, KeyEventArgs e)
+        {
+            SendControlCommand($"INPUT|KD|{(int)e.KeyCode}");
+        }
+
+        private void PreviewForm_KeyUp(object? sender, KeyEventArgs e)
+        {
+            SendControlCommand($"INPUT|KU|{(int)e.KeyCode}");
+        }
+
+        private void PreviewBox_MouseMove(object? sender, MouseEventArgs e)
+        {
+            if (Environment.TickCount64 - _lastMouseMoveTick < 30)
+                return;
+
+            _lastMouseMoveTick = Environment.TickCount64;
+            if (TryGetNormalizedPoint(e.Location, out var x, out var y))
+            {
+                SendControlCommand($"INPUT|MM|{x.ToString(CultureInfo.InvariantCulture)}|{y.ToString(CultureInfo.InvariantCulture)}");
+            }
+        }
+
+        private void PreviewBox_MouseDown(object? sender, MouseEventArgs e)
+        {
+            if (TryGetNormalizedPoint(e.Location, out var x, out var y))
+            {
+                var button = e.Button switch
+                {
+                    MouseButtons.Left => "Left",
+                    MouseButtons.Right => "Right",
+                    MouseButtons.Middle => "Middle",
+                    _ => string.Empty
+                };
+
+                if (!string.IsNullOrEmpty(button))
+                {
+                    SendControlCommand($"INPUT|MD|{button}|{x.ToString(CultureInfo.InvariantCulture)}|{y.ToString(CultureInfo.InvariantCulture)}");
+                }
+            }
+        }
+
+        private void PreviewBox_MouseUp(object? sender, MouseEventArgs e)
+        {
+            if (TryGetNormalizedPoint(e.Location, out var x, out var y))
+            {
+                var button = e.Button switch
+                {
+                    MouseButtons.Left => "Left",
+                    MouseButtons.Right => "Right",
+                    MouseButtons.Middle => "Middle",
+                    _ => string.Empty
+                };
+
+                if (!string.IsNullOrEmpty(button))
+                {
+                    SendControlCommand($"INPUT|MU|{button}|{x.ToString(CultureInfo.InvariantCulture)}|{y.ToString(CultureInfo.InvariantCulture)}");
+                }
+            }
+        }
+
+        private void PreviewBox_MouseWheel(object? sender, MouseEventArgs e)
+        {
+            if (TryGetNormalizedPoint(e.Location, out var x, out var y))
+            {
+                SendControlCommand($"INPUT|MW|{e.Delta.ToString(CultureInfo.InvariantCulture)}|{x.ToString(CultureInfo.InvariantCulture)}|{y.ToString(CultureInfo.InvariantCulture)}");
+            }
+        }
+
+        private void PreviewBox_MouseEnter(object? sender, EventArgs e)
+        {
+            _previewBox?.Focus();
+        }
+
+        private bool TryGetNormalizedPoint(Point location, out double x, out double y)
+        {
+            x = 0;
+            y = 0;
+
+            if (_previewBox?.Image == null)
+                return false;
+
+            var rect = GetImageDisplayRectangle(_previewBox);
+            if (!rect.Contains(location))
+                return false;
+
+            x = (location.X - rect.X) / (double)rect.Width;
+            y = (location.Y - rect.Y) / (double)rect.Height;
+            x = Math.Clamp(x, 0, 1);
+            y = Math.Clamp(y, 0, 1);
+            return true;
+        }
+
+        private static Rectangle GetImageDisplayRectangle(PictureBox pictureBox)
+        {
+            var image = pictureBox.Image;
+            if (image == null)
+                return pictureBox.ClientRectangle;
+
+            var boxWidth = pictureBox.ClientSize.Width;
+            var boxHeight = pictureBox.ClientSize.Height;
+            if (boxWidth == 0 || boxHeight == 0)
+                return pictureBox.ClientRectangle;
+
+            var imageRatio = image.Width / (double)image.Height;
+            var boxRatio = boxWidth / (double)boxHeight;
+
+            if (imageRatio > boxRatio)
+            {
+                var width = boxWidth;
+                var height = (int)Math.Round(width / imageRatio);
+                var y = (boxHeight - height) / 2;
+                return new Rectangle(0, y, width, height);
+            }
+
+            var h = boxHeight;
+            var w = (int)Math.Round(h * imageRatio);
+            var xPos = (boxWidth - w) / 2;
+            return new Rectangle(xPos, 0, w, h);
+        }
+
+        private void SendControlCommand(string command)
+        {
+            if (_socket == null || !_socket.Connected)
+                return;
+
+            var payload = Encoding.UTF8.GetBytes(command + "\n");
+            _ = _socket.SendAsync(payload, SocketFlags.None);
+        }
+
+        private void CloseConnection(string message, bool sendBye)
+        {
+            if (_socket == null || !_socket.Connected)
+            {
+                _isStreaming = false;
+                btnDisconnect.Text = "Quit";
+                return;
+            }
+
+            AppendLog(message);
+            if (sendBye)
+            {
+                try
+                {
+                    var data = Encoding.UTF8.GetBytes("BYE");
+                    _socket.Send(data);
+                }
+                catch { }
+            }
+
+            try { _socket.Shutdown(SocketShutdown.Both); } catch { }
+            try { _socket.Close(); } catch { }
+            _socket = null;
+            _isStreaming = false;
+            btnDisconnect.Text = "Quit";
+            AppendLog("Disconnected.");
         }
 
         private void AppendLog(string message)
@@ -279,6 +443,17 @@ namespace ViewerApp
             {
                 // ignore UI logging errors
             }
+        }
+
+        private void ApplyLocalization()
+        {
+            this.Text = ScreenDash.Resources.Strings.ViewerForm_WindowTitle;
+            lblTitle.Text = ScreenDash.Resources.Strings.ViewerForm_Title;
+            lblAccessCode.Text = ScreenDash.Resources.Strings.ViewerForm_AccessCode;
+            btnConnect.Text = ScreenDash.Resources.Strings.ViewerForm_Connect;
+            btnDisconnect.Text = ScreenDash.Resources.Strings.ViewerForm_Disconnect;
+            // The status label is dynamic
+            // lblStatus.Text = ScreenDash.Resources.Strings.ViewerForm_StatusDisconnected;
         }
     }
 }

@@ -41,51 +41,51 @@
     <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
   </resheader>
   <data name="HostForm_AllowRemoteInput" xml:space="preserve">
-    <value>Allow remote input</value>
+    <value>Permitir controle remoto</value>
   </data>
   <data name="HostForm_CopyCode" xml:space="preserve">
-    <value>Copy code</value>
+    <value>Copiar código</value>
   </data>
   <data name="HostForm_Quit" xml:space="preserve">
-    <value>Quit</value>
+    <value>Sair</value>
   </data>
   <data name="HostForm_RemoteControlActive" xml:space="preserve">
-    <value>Remote control active</value>
+    <value>Controle remoto ativo</value>
   </data>
   <data name="HostForm_RemoteControlInactive" xml:space="preserve">
-    <value>Remote control inactive</value>
+    <value>Controle remoto inativo</value>
   </data>
   <data name="HostForm_StartSharing" xml:space="preserve">
-    <value>Start sharing</value>
+    <value>Iniciar compartilhamento</value>
   </data>
   <data name="HostForm_StatusNotReady" xml:space="preserve">
-    <value>Not ready to connect</value>
+    <value>Não pronto para conectar</value>
   </data>
   <data name="HostForm_StatusReady" xml:space="preserve">
-    <value>Status: Ready to connect</value>
+    <value>Status: Pronto para conectar</value>
   </data>
   <data name="HostForm_Title" xml:space="preserve">
-    <value>Support Share</value>
+    <value>Compartilhamento de Suporte</value>
   </data>
   <data name="HostForm_YourAccessCode" xml:space="preserve">
-    <value>Your access code</value>
+    <value>Seu código de acesso</value>
   </data>
   <data name="ViewerForm_AccessCode" xml:space="preserve">
-    <value>Access code:</value>
+    <value>Código de acesso:</value>
   </data>
   <data name="ViewerForm_Connect" xml:space="preserve">
-    <value>Connect</value>
+    <value>Conectar</value>
   </data>
   <data name="ViewerForm_Disconnect" xml:space="preserve">
-    <value>Disconnect</value>
+    <value>Desconectar</value>
   </data>
   <data name="ViewerForm_StatusDisconnected" xml:space="preserve">
-    <value>Status: Disconnected</value>
+    <value>Status: Desconectado</value>
   </data>
   <data name="ViewerForm_Title" xml:space="preserve">
-    <value>Viewer (Support)</value>
+    <value>Visualizador (Suporte)</value>
   </data>
   <data name="ViewerForm_WindowTitle" xml:space="preserve">
-    <value>Viewer</value>
+    <value>Visualizador</value>
   </data>
 </root>

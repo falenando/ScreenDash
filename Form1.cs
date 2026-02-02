@@ -16,7 +16,6 @@ namespace ScreenDash
         }
         private void btnOpenSupportShare_Click(object? sender, EventArgs e)
         {
-<<<<<<< HEAD
             using var f = new SupportShareForm();
             f.ShowDialog(this);
         }
@@ -32,11 +31,6 @@ namespace ScreenDash
             btnCheckUpdates.Enabled = false;
             btnCheckUpdates.Text = "Verificando...";
 
-=======
-            btnCheckUpdates.Enabled = false;
-            btnCheckUpdates.Text = "Verificando...";
-
->>>>>>> fb78e0ad54faaaa7f0d5dae11d3bf5745ff81448
             try
             {
                 var source = new GithubSource("https://github.com/falenando/ScreenDash", accessToken: null, prerelease: false);
@@ -47,7 +41,7 @@ namespace ScreenDash
 
                 if (update == null)
                 {
-                    MessageBox.Show("Nenhuma atualização disponível.");
+                    MessageBox.Show("Nenhuma atualizaï¿½ï¿½o disponï¿½vel.");
                     return;
                 }
 
@@ -57,13 +51,13 @@ namespace ScreenDash
             catch (Exception ex)
             {
                 MessageBox.Show(
-                    "Erro ao verificar atualizações:\n\n" + ex.Message
+                    "Erro ao verificar atualizaï¿½ï¿½es:\n\n" + ex.Message
                 );
             }
             finally
             {
                 btnCheckUpdates.Enabled = true;
-                btnCheckUpdates.Text = "Buscar atualizações";
+                btnCheckUpdates.Text = "Buscar atualizaï¿½ï¿½es";
             }
         }        
     }
