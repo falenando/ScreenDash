@@ -8,6 +8,7 @@ using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using RemoteCore.Implementations;
+using System.IO;
 
 namespace HostApp
 {
@@ -95,6 +96,14 @@ namespace HostApp
 
         private void StartListening()
         {
+            if (!CanStartListenerWithoutPrompt(Port, out var reason))
+            {
+                AppendLog("Listener not started: " + reason);
+                UpdateStatus("Not ready to connect", System.Drawing.Color.Red);
+                _isListening = false;
+                return;
+            }
+
             // start the listener implementation in background
             _cts = new System.Threading.CancellationTokenSource();
             try
@@ -111,6 +120,190 @@ namespace HostApp
                 AppendLog("Failed to start listener: " + ex.Message);
                 _isListening = false;
             }
+        }
+
+        private bool CanStartListenerWithoutPrompt(int port, out string reason)
+        {
+            reason = string.Empty;
+
+            if (port <= 0 || port > 65535)
+            {
+                reason = $"Invalid port: {port}.";
+                return false;
+            }
+
+            if (!IsTcpPortFree(port))
+            {
+                reason = $"Port {port} is already in use.";
+                return false;
+            }
+
+            // Avoid triggering Windows Firewall prompt/UAC for restricted users:
+            // only start listening if firewall already allows inbound traffic for this app/port.
+            if (!IsFirewallInboundAllowedForThisAppOrPort(port))
+            {
+                reason = $"Windows Firewall inbound rule not found/enabled for TCP port {port} (or this app). Ask an administrator to allow it, then try again.";
+                return false;
+            }
+
+            return true;
+        }
+
+        private static bool IsTcpPortFree(int port)
+        {
+            Socket? probe = null;
+            try
+            {
+                probe = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+                probe.Bind(new IPEndPoint(IPAddress.Any, port));
+                return true;
+            }
+            catch (SocketException)
+            {
+                return false;
+            }
+            catch
+            {
+                // Conservative: if we cannot determine, do not start.
+                return false;
+            }
+            finally
+            {
+                try { probe?.Dispose(); } catch { }
+            }
+        }
+
+        private static bool IsFirewallInboundAllowedForThisAppOrPort(int port)
+        {
+            // Prefer a safe, no-prompt approach: inspect existing firewall rules.
+            // If we cannot read firewall policy (e.g., access denied), treat as not allowed
+            // to ensure we don't start listening and trigger prompts.
+            try
+            {
+                var exePath = GetCurrentExePath();
+                return FirewallRuleAllows(exePath, port);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static string GetCurrentExePath()
+        {
+            // Application.ExecutablePath can be null in some hosting scenarios; fall back to process main module.
+            try
+            {
+                var p = Application.ExecutablePath;
+                if (!string.IsNullOrWhiteSpace(p))
+                    return Path.GetFullPath(p);
+            }
+            catch { }
+
+            try
+            {
+                var p = System.Diagnostics.Process.GetCurrentProcess().MainModule?.FileName;
+                if (!string.IsNullOrWhiteSpace(p))
+                    return Path.GetFullPath(p);
+            }
+            catch { }
+
+            return string.Empty;
+        }
+
+        private static bool FirewallRuleAllows(string exePath, int port)
+        {
+            // Uses COM API (HNetCfg.FwPolicy2) available on Windows.
+            // Do not add any rule here—only detect an existing enabled allow rule.
+            var policyType = Type.GetTypeFromProgID("HNetCfg.FwPolicy2");
+            if (policyType == null)
+                return false;
+
+            dynamic policy = Activator.CreateInstance(policyType)!;
+            dynamic rules = policy.Rules;
+
+            // Constants from NetFwTypeLib
+            const int NET_FW_RULE_DIR_IN = 1;
+            const int NET_FW_ACTION_ALLOW = 1;
+            const int NET_FW_IP_PROTOCOL_TCP = 6;
+
+            var exeFull = string.IsNullOrWhiteSpace(exePath) ? string.Empty : Path.GetFullPath(exePath);
+
+            foreach (dynamic rule in rules)
+            {
+                try
+                {
+                    if ((int)rule.Direction != NET_FW_RULE_DIR_IN)
+                        continue;
+                    if (!(bool)rule.Enabled)
+                        continue;
+                    if ((int)rule.Action != NET_FW_ACTION_ALLOW)
+                        continue;
+
+                    // Some rules have protocol = ANY (256). Only accept TCP or ANY.
+                    var proto = (int)rule.Protocol;
+                    if (proto != NET_FW_IP_PROTOCOL_TCP && proto != 256)
+                        continue;
+
+                    // Accept if rule matches this application, or explicitly opens the port.
+                    var ruleApp = string.Empty;
+                    try { ruleApp = (string)rule.ApplicationName; } catch { }
+
+                    if (!string.IsNullOrWhiteSpace(ruleApp) && !string.IsNullOrWhiteSpace(exeFull))
+                    {
+                        var ruleAppFull = Path.GetFullPath(ruleApp);
+                        if (string.Equals(ruleAppFull, exeFull, StringComparison.OrdinalIgnoreCase))
+                            return true;
+                    }
+
+                    var localPorts = string.Empty;
+                    try { localPorts = (string)rule.LocalPorts; } catch { }
+                    if (PortListContains(localPorts, port))
+                        return true;
+                }
+                catch
+                {
+                    // ignore bad rules
+                }
+            }
+
+            return false;
+        }
+
+        private static bool PortListContains(string? ports, int port)
+        {
+            if (string.IsNullOrWhiteSpace(ports))
+                return false;
+
+            // Examples: "5050", "5050-5060", "80,443,5050", "Any"
+            if (string.Equals(ports.Trim(), "Any", StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            foreach (var raw in ports.Split(','))
+            {
+                var part = raw.Trim();
+                if (part.Length == 0)
+                    continue;
+
+                var dash = part.IndexOf('-');
+                if (dash >= 0)
+                {
+                    var startStr = part.Substring(0, dash).Trim();
+                    var endStr = part.Substring(dash + 1).Trim();
+                    if (int.TryParse(startStr, out var start) && int.TryParse(endStr, out var end))
+                    {
+                        if (port >= start && port <= end)
+                            return true;
+                    }
+
+                    continue;
+                }
+
+                if (int.TryParse(part, out var single) && single == port)
+                    return true;
+            }
+
+            return false;
         }
         private async Task HandleIncomingSocket(Socket socket)
         {
