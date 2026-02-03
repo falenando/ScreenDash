@@ -223,6 +223,11 @@ namespace ViewerApp
 
         private Form? _previewForm;
         private PictureBox? _previewBox;
+        private Panel? _previewScroll;
+        private ToolStrip? _previewTool;
+        private float _zoomFactor = 1.0f;
+        private enum ViewerScaleMode { AutoFit, ActualSize, FitWidth }
+        private ViewerScaleMode _scaleMode = ViewerScaleMode.AutoFit;
 
         private void ShowRemoteImage(Image img)
         {
@@ -236,32 +241,124 @@ namespace ViewerApp
                 _previewForm.FormClosed += PreviewForm_FormClosed;
                 _previewForm.KeyDown += PreviewForm_KeyDown;
                 _previewForm.KeyUp += PreviewForm_KeyUp;
+
+                _previewTool = BuildPreviewToolStrip();
+                _previewTool.Dock = DockStyle.Top;
+                _previewForm.Controls.Add(_previewTool);
+
+                _previewScroll = new Panel();
+                _previewScroll.Dock = DockStyle.Fill;
+                _previewScroll.AutoScroll = true;
+                _previewScroll.BackColor = Color.Black;
+                _previewScroll.Resize += (_, _) => UpdatePreviewLayout();
+                _previewForm.Controls.Add(_previewScroll);
+
                 _previewBox = new PictureBox();
-                _previewBox.Dock = DockStyle.Fill;
-                _previewBox.SizeMode = PictureBoxSizeMode.Zoom;
+                _previewBox.BackColor = Color.Black;
+                _previewBox.SizeMode = PictureBoxSizeMode.StretchImage;
                 _previewBox.TabStop = true;
                 _previewBox.MouseMove += PreviewBox_MouseMove;
                 _previewBox.MouseDown += PreviewBox_MouseDown;
                 _previewBox.MouseUp += PreviewBox_MouseUp;
                 _previewBox.MouseWheel += PreviewBox_MouseWheel;
                 _previewBox.MouseEnter += PreviewBox_MouseEnter;
-                _previewForm.Controls.Add(_previewBox);
+                _previewScroll.Controls.Add(_previewBox);
+
                 _previewForm.Show(this);
             }
 
             if (_previewBox != null)
             {
                 if (_previewBox.InvokeRequired)
-                    _previewBox.Invoke(() => _previewBox.Image = (Image)img.Clone());
+                    _previewBox.Invoke(() => SetPreviewImage(img));
                 else
-                    _previewBox.Image = (Image)img.Clone();
+                    SetPreviewImage(img);
             }
+        }
+
+        private void SetPreviewImage(Image img)
+        {
+            if (_previewBox == null)
+                return;
+
+            var old = _previewBox.Image;
+            _previewBox.Image = (Image)img.Clone();
+            old?.Dispose();
+            UpdatePreviewLayout();
+        }
+
+        private ToolStrip BuildPreviewToolStrip()
+        {
+            var strip = new ToolStrip();
+
+            var btnAuto = new ToolStripButton("Auto") { CheckOnClick = true };
+            var btn100 = new ToolStripButton("100%") { CheckOnClick = true };
+            var btnFitW = new ToolStripButton("Fit W") { CheckOnClick = true };
+
+            void SetMode(ViewerScaleMode mode)
+            {
+                _scaleMode = mode;
+                btnAuto.Checked = mode == ViewerScaleMode.AutoFit;
+                btn100.Checked = mode == ViewerScaleMode.ActualSize;
+                btnFitW.Checked = mode == ViewerScaleMode.FitWidth;
+                UpdatePreviewLayout();
+            }
+
+            btnAuto.Click += (_, _) => SetMode(ViewerScaleMode.AutoFit);
+            btn100.Click += (_, _) => SetMode(ViewerScaleMode.ActualSize);
+            btnFitW.Click += (_, _) => SetMode(ViewerScaleMode.FitWidth);
+
+            strip.Items.Add(new ToolStripLabel("Scale:"));
+            strip.Items.Add(btnAuto);
+            strip.Items.Add(btn100);
+            strip.Items.Add(btnFitW);
+            strip.Items.Add(new ToolStripSeparator());
+            strip.Items.Add(new ToolStripLabel("Ctrl+Wheel: zoom"));
+
+            // default
+            btnAuto.Checked = true;
+            return strip;
+        }
+
+        private void UpdatePreviewLayout()
+        {
+            if (_previewBox?.Image == null || _previewScroll == null)
+                return;
+
+            var img = _previewBox.Image;
+            var viewW = Math.Max(1, _previewScroll.ClientSize.Width);
+            var viewH = Math.Max(1, _previewScroll.ClientSize.Height);
+
+            var scale = _scaleMode switch
+            {
+                ViewerScaleMode.ActualSize => 1.0f,
+                ViewerScaleMode.FitWidth => viewW / (float)img.Width,
+                _ => Math.Min(viewW / (float)img.Width, viewH / (float)img.Height)
+            };
+
+            if (_scaleMode != ViewerScaleMode.ActualSize)
+                scale = Math.Max(0.05f, Math.Min(5.0f, scale * _zoomFactor));
+            else
+                scale = Math.Max(0.05f, Math.Min(5.0f, 1.0f * _zoomFactor));
+
+            var w = Math.Max(1, (int)Math.Round(img.Width * scale));
+            var h = Math.Max(1, (int)Math.Round(img.Height * scale));
+            _previewBox.Size = new Size(w, h);
+
+            // center when smaller than viewport (no scrollbars)
+            var x = w < viewW ? (viewW - w) / 2 : 0;
+            var y = h < viewH ? (viewH - h) / 2 : 0;
+            _previewBox.Location = new Point(x, y);
         }
 
         private void PreviewForm_FormClosed(object? sender, FormClosedEventArgs e)
         {
             _previewForm = null;
             _previewBox = null;
+            _previewScroll = null;
+            _previewTool = null;
+            _zoomFactor = 1.0f;
+            _scaleMode = ViewerScaleMode.AutoFit;
             CloseConnection("Preview window closed. Disconnecting from host...", sendBye: true);
         }
 
@@ -346,43 +443,16 @@ namespace ViewerApp
             if (_previewBox?.Image == null)
                 return false;
 
-            var rect = GetImageDisplayRectangle(_previewBox);
-            if (!rect.Contains(location))
+            // With StretchImage and a scrollable panel, the image occupies the full PictureBox.
+            // Mouse coords are already in image-display space (scaled), so just normalize to box size.
+            if (location.X < 0 || location.Y < 0 || location.X >= _previewBox.Width || location.Y >= _previewBox.Height)
                 return false;
 
-            x = (location.X - rect.X) / (double)rect.Width;
-            y = (location.Y - rect.Y) / (double)rect.Height;
+            x = location.X / (double)_previewBox.Width;
+            y = location.Y / (double)_previewBox.Height;
             x = Math.Clamp(x, 0, 1);
             y = Math.Clamp(y, 0, 1);
             return true;
-        }
-
-        private static Rectangle GetImageDisplayRectangle(PictureBox pictureBox)
-        {
-            var image = pictureBox.Image;
-            if (image == null)
-                return pictureBox.ClientRectangle;
-
-            var boxWidth = pictureBox.ClientSize.Width;
-            var boxHeight = pictureBox.ClientSize.Height;
-            if (boxWidth == 0 || boxHeight == 0)
-                return pictureBox.ClientRectangle;
-
-            var imageRatio = image.Width / (double)image.Height;
-            var boxRatio = boxWidth / (double)boxHeight;
-
-            if (imageRatio > boxRatio)
-            {
-                var width = boxWidth;
-                var height = (int)Math.Round(width / imageRatio);
-                var y = (boxHeight - height) / 2;
-                return new Rectangle(0, y, width, height);
-            }
-
-            var h = boxHeight;
-            var w = (int)Math.Round(h * imageRatio);
-            var xPos = (boxWidth - w) / 2;
-            return new Rectangle(xPos, 0, w, h);
         }
 
         private void SendControlCommand(string command)

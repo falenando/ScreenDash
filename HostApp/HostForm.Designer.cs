@@ -14,6 +14,7 @@ namespace HostApp
 
         private void InitializeComponent()
         {
+            System.ComponentModel.ComponentResourceManager resources = new System.ComponentModel.ComponentResourceManager(typeof(HostForm));
             lblTitle = new Label();
             txtTokenRemoto = new TextBox();
             lblYourAccess = new Label();
@@ -97,7 +98,7 @@ namespace HostApp
             lblRemoteControlStatus.ForeColor = Color.Gray;
             lblRemoteControlStatus.Location = new Point(14, 206);
             lblRemoteControlStatus.Name = "lblRemoteControlStatus";
-            lblRemoteControlStatus.Size = new Size(176, 20);
+            lblRemoteControlStatus.Size = new Size(167, 20);
             lblRemoteControlStatus.TabIndex = 9;
             lblRemoteControlStatus.Text = "Remote control inactive";
             // 
@@ -121,7 +122,7 @@ namespace HostApp
             // 
             // pbStatus
             // 
-            pbStatus.BackColor = Color.LimeGreen;
+            pbStatus.BackColor = Color.Red;
             pbStatus.Location = new Point(3, 8);
             pbStatus.Name = "pbStatus";
             pbStatus.Size = new Size(16, 16);
@@ -133,9 +134,9 @@ namespace HostApp
             lblStatus.AutoSize = true;
             lblStatus.Location = new Point(28, 6);
             lblStatus.Name = "lblStatus";
-            lblStatus.Size = new Size(171, 20);
+            lblStatus.Size = new Size(149, 20);
             lblStatus.TabIndex = 1;
-            lblStatus.Text = "Status: Ready to connect";
+            lblStatus.Text = "Not ready to connect";
             // 
             // btnQuit
             // 
@@ -162,12 +163,10 @@ namespace HostApp
             Controls.Add(txtTokenRemoto);
             Controls.Add(lblTitle);
             FormBorderStyle = FormBorderStyle.FixedDialog;
+            Icon = (Icon)resources.GetObject("$this.Icon");
             MaximizeBox = false;
             Name = "HostForm";
             Text = "Support Share";
-            // initial status: not ready
-            pbStatus.BackColor = System.Drawing.Color.Red;
-            lblStatus.Text = "Not ready to connect";
             panelStatus.ResumeLayout(false);
             panelStatus.PerformLayout();
             ((System.ComponentModel.ISupportInitialize)pbStatus).EndInit();
