@@ -1,0 +1,6 @@
+version: 1
+release:
+  provider: github
+  github:
+    owner: falenando
+    repo: ScreenDash

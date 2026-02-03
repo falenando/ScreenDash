@@ -1,15 +1,8 @@
 <Solution>
   <Configurations>
-    <Platform Name="Any CPU" />
-    <Platform Name="ARM" />
-    <Platform Name="ARM64" />
     <Platform Name="x64" />
-    <Platform Name="x86" />
   </Configurations>
-  <Project Path="../Setup1/Setup1.vdproj" Type="Installer">
-    <Build Solution="Release|x64" />
-  </Project>
-  <Project Path="ScreenDash.csproj">
-    <Platform Solution="Release|x64" Project="x64" />
-  </Project>
+  <Project Path="HostApp/HostApp.csproj" />
+  <Project Path="RemoteCore/RemoteCore.csproj" />
+  <Project Path="ViewerApp/ViewerApp.csproj" />
 </Solution>

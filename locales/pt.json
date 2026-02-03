@@ -1,0 +1,10 @@
+{
+  "ErrorFormat": "Erro: {0}",
+  "InvalidInput": "Entrada inválida. Forneça um código de acesso de 6 caracteres ou um endereço IP.",
+  "LocalIPv4Invalid": "IPv4 local inválido; não é possível resolver o IP de destino.",
+  "DifferentNetworkCode": "Código inválido: o host está em uma rede diferente da sua (somente LAN /24).",
+  "DifferentNetworkIP": "IP inválido: o host está em uma rede diferente da sua (somente LAN /24).",
+  "ConnectTimeout": "Tempo de conexão esgotado",
+  "ConfirmTerminate": "Uma conexão ativa será encerrada. Deseja continuar?",
+  "Confirm": "Confirmar"
+}

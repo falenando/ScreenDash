@@ -28,25 +28,58 @@
         /// </summary>
         private void InitializeComponent()
         {
-            BtnCheckUpdates = new Button();
+            btnCheckUpdates = new Button();
+<<<<<<< HEAD
+            btnOpenSupportShare = new Button();
+            btnOpenRemoteAssist = new Button();
+=======
+>>>>>>> fb78e0ad54faaaa7f0d5dae11d3bf5745ff81448
             SuspendLayout();
             // 
             // BtnCheckUpdates
             // 
-            BtnCheckUpdates.Location = new Point(181, 91);
-            BtnCheckUpdates.Name = "BtnCheckUpdates";
-            BtnCheckUpdates.Size = new Size(198, 29);
-            BtnCheckUpdates.TabIndex = 0;
-            BtnCheckUpdates.Text = "Atualizar";
-            BtnCheckUpdates.UseVisualStyleBackColor = true;
-            BtnCheckUpdates.Click += btnCheckUpdates_Click;
+            btnCheckUpdates.Location = new Point(181, 91);
+            btnCheckUpdates.Name = "BtnCheckUpdates";
+            btnCheckUpdates.Size = new Size(198, 29);
+            btnCheckUpdates.TabIndex = 0;
+            btnCheckUpdates.Text = "Atualizar";
+            btnCheckUpdates.UseVisualStyleBackColor = true;
+            btnCheckUpdates.Click += btnCheckUpdates_Click;
+<<<<<<< HEAD
+            // 
+            // btnOpenSupportShare
+            // 
+            btnOpenSupportShare.Location = new Point(181, 140);
+            btnOpenSupportShare.Name = "btnOpenSupportShare";
+            btnOpenSupportShare.Size = new Size(198, 29);
+            btnOpenSupportShare.TabIndex = 1;
+            btnOpenSupportShare.Text = "Open Support Share";
+            btnOpenSupportShare.UseVisualStyleBackColor = true;
+            btnOpenSupportShare.Click += btnOpenSupportShare_Click;
+            // 
+            // btnOpenRemoteAssist
+            // 
+            btnOpenRemoteAssist.Location = new Point(181, 190);
+            btnOpenRemoteAssist.Name = "btnOpenRemoteAssist";
+            btnOpenRemoteAssist.Size = new Size(198, 29);
+            btnOpenRemoteAssist.TabIndex = 2;
+            btnOpenRemoteAssist.Text = "Open Remote Assist";
+            btnOpenRemoteAssist.UseVisualStyleBackColor = true;
+            btnOpenRemoteAssist.Click += btnOpenRemoteAssist_Click;
+=======
+>>>>>>> fb78e0ad54faaaa7f0d5dae11d3bf5745ff81448
             // 
             // Form1
             // 
             AutoScaleDimensions = new SizeF(8F, 20F);
             AutoScaleMode = AutoScaleMode.Font;
             ClientSize = new Size(800, 450);
-            Controls.Add(BtnCheckUpdates);
+<<<<<<< HEAD
+            Controls.Add(btnOpenRemoteAssist);
+            Controls.Add(btnOpenSupportShare);
+=======
+>>>>>>> fb78e0ad54faaaa7f0d5dae11d3bf5745ff81448
+            Controls.Add(btnCheckUpdates);
             Name = "Form1";
             Text = "Form1";
             ResumeLayout(false);
@@ -54,6 +87,11 @@
 
         #endregion
 
-        private Button BtnCheckUpdates;
+        private Button btnCheckUpdates;
+<<<<<<< HEAD
+        private Button btnOpenSupportShare;
+        private Button btnOpenRemoteAssist;
+=======
+>>>>>>> fb78e0ad54faaaa7f0d5dae11d3bf5745ff81448
     }
 }

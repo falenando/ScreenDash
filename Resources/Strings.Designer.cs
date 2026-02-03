@@ -22,7 +22,7 @@ namespace ScreenDash.Resources {
     [global::System.CodeDom.Compiler.GeneratedCodeAttribute("System.Resources.Tools.StronglyTypedResourceBuilder", "18.0.0.0")]
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
     [global::System.Runtime.CompilerServices.CompilerGeneratedAttribute()]
-    internal class Strings {
+    public class Strings {
         
         private static global::System.Resources.ResourceManager resourceMan;
         
@@ -36,10 +36,10 @@ namespace ScreenDash.Resources {
         ///   Retorna a instância de ResourceManager armazenada em cache usada por essa classe.
         /// </summary>
         [global::System.ComponentModel.EditorBrowsableAttribute(global::System.ComponentModel.EditorBrowsableState.Advanced)]
-        internal static global::System.Resources.ResourceManager ResourceManager {
+        public static global::System.Resources.ResourceManager ResourceManager {
             get {
                 if (object.ReferenceEquals(resourceMan, null)) {
-                    global::System.Resources.ResourceManager temp = new global::System.Resources.ResourceManager("ScreenDash.Resources.Strings", typeof(Strings).Assembly);
+                    global::System.Resources.ResourceManager temp = new global::System.Resources.ResourceManager("RemoteCore.Resources.Strings", typeof(Strings).Assembly);
                     resourceMan = temp;
                 }
                 return resourceMan;
@@ -51,7 +51,7 @@ namespace ScreenDash.Resources {
         ///   pesquisas de recursos que usam essa classe de recurso de tipo de alta segurança.
         /// </summary>
         [global::System.ComponentModel.EditorBrowsableAttribute(global::System.ComponentModel.EditorBrowsableState.Advanced)]
-        internal static global::System.Globalization.CultureInfo Culture {
+        public static global::System.Globalization.CultureInfo Culture {
             get {
                 return resourceCulture;
             }
@@ -61,20 +61,320 @@ namespace ScreenDash.Resources {
         }
         
         /// <summary>
-        ///   Consulta uma cadeia de caracteres localizada semelhante a Check for updates.
+        ///   Consulta uma cadeia de caracteres localizada semelhante a Allow remote input.
         /// </summary>
-        internal static string BtnCheckUpdates {
+        public static string HostForm_AllowRemoteInput {
             get {
-                return ResourceManager.GetString("BtnCheckUpdates", resourceCulture);
+                return ResourceManager.GetString("HostForm_AllowRemoteInput", resourceCulture);
             }
         }
         
         /// <summary>
-        ///   Consulta uma cadeia de caracteres localizada semelhante a You are using the latest version.
+        ///   Consulta uma cadeia de caracteres localizada semelhante a Copy code.
         /// </summary>
-        internal static string MsgUpToDate {
+        public static string HostForm_CopyCode {
             get {
-                return ResourceManager.GetString("MsgUpToDate", resourceCulture);
+                return ResourceManager.GetString("HostForm_CopyCode", resourceCulture);
+            }
+        }
+
+        /// <summary>
+        ///   Consulta uma cadeia de caracteres localizada semelhante a Remote control active.
+        /// </summary>
+        public static string HostForm_RemoteControlActive {
+            get {
+                return ResourceManager.GetString("HostForm_RemoteControlActive", resourceCulture);
+            }
+        }
+
+        /// <summary>
+        ///   Consulta uma cadeia de caracteres localizada semelhante a Remote control inactive.
+        /// </summary>
+        public static string HostForm_RemoteControlInactive {
+            get {
+                return ResourceManager.GetString("HostForm_RemoteControlInactive", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   Consulta uma cadeia de caracteres localizada semelhante a Quit.
+        /// </summary>
+        public static string HostForm_Quit {
+            get {
+                return ResourceManager.GetString("HostForm_Quit", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   Consulta uma cadeia de caracteres localizada semelhante a Start sharing.
+        /// </summary>
+        public static string HostForm_StartSharing {
+            get {
+                return ResourceManager.GetString("HostForm_StartSharing", resourceCulture);
+            }
+        }
+
+        public static string HostForm_StopSharing {
+            get {
+                return ResourceManager.GetString("HostForm_StopSharing", resourceCulture);
+            }
+        }
+
+        public static string HostForm_StatusConnected {
+            get {
+                return ResourceManager.GetString("HostForm_StatusConnected", resourceCulture);
+            }
+        }
+
+        public static string HostForm_StatusWaitingForConnection {
+            get {
+                return ResourceManager.GetString("HostForm_StatusWaitingForConnection", resourceCulture);
+            }
+        }
+
+        public static string Common_Confirm {
+            get {
+                return ResourceManager.GetString("Common_Confirm", resourceCulture);
+            }
+        }
+
+        public static string Common_ErrorWithMessage {
+            get {
+                return ResourceManager.GetString("Common_ErrorWithMessage", resourceCulture);
+            }
+        }
+
+        public static string HostMsg_ActiveConnectionWillBeTerminated {
+            get {
+                return ResourceManager.GetString("HostMsg_ActiveConnectionWillBeTerminated", resourceCulture);
+            }
+        }
+
+        public static string HostLog_AcceptedConnectionFrom {
+            get {
+                return ResourceManager.GetString("HostLog_AcceptedConnectionFrom", resourceCulture);
+            }
+        }
+
+        public static string HostLog_AccessCode {
+            get {
+                return ResourceManager.GetString("HostLog_AccessCode", resourceCulture);
+            }
+        }
+
+        public static string HostLog_ConnectionHandlingError {
+            get {
+                return ResourceManager.GetString("HostLog_ConnectionHandlingError", resourceCulture);
+            }
+        }
+
+        public static string HostLog_CopiedAccessCodeToClipboard {
+            get {
+                return ResourceManager.GetString("HostLog_CopiedAccessCodeToClipboard", resourceCulture);
+            }
+        }
+
+        public static string HostLog_CopyFailed {
+            get {
+                return ResourceManager.GetString("HostLog_CopyFailed", resourceCulture);
+            }
+        }
+
+        public static string HostLog_DetectingLocalIPv4 {
+            get {
+                return ResourceManager.GetString("HostLog_DetectingLocalIPv4", resourceCulture);
+            }
+        }
+
+        public static string HostLog_ErrorCheckingRemoteEndpoint {
+            get {
+                return ResourceManager.GetString("HostLog_ErrorCheckingRemoteEndpoint", resourceCulture);
+            }
+        }
+
+        public static string HostLog_ErrorSendingByeMessage {
+            get {
+                return ResourceManager.GetString("HostLog_ErrorSendingByeMessage", resourceCulture);
+            }
+        }
+
+        public static string HostLog_ErrorStartingListener {
+            get {
+                return ResourceManager.GetString("HostLog_ErrorStartingListener", resourceCulture);
+            }
+        }
+
+        public static string HostLog_FailedToStartListener {
+            get {
+                return ResourceManager.GetString("HostLog_FailedToStartListener", resourceCulture);
+            }
+        }
+
+        public static string HostLog_FormClosingStoppingListener {
+            get {
+                return ResourceManager.GetString("HostLog_FormClosingStoppingListener", resourceCulture);
+            }
+        }
+
+        public static string HostLog_GeneratedNewAccessCode {
+            get {
+                return ResourceManager.GetString("HostLog_GeneratedNewAccessCode", resourceCulture);
+            }
+        }
+
+        public static string HostLog_GeneratingAccessCode {
+            get {
+                return ResourceManager.GetString("HostLog_GeneratingAccessCode", resourceCulture);
+            }
+        }
+
+        public static string HostLog_InitializationError {
+            get {
+                return ResourceManager.GetString("HostLog_InitializationError", resourceCulture);
+            }
+        }
+
+        public static string HostLog_ListenerNotStarted {
+            get {
+                return ResourceManager.GetString("HostLog_ListenerNotStarted", resourceCulture);
+            }
+        }
+
+        public static string HostLog_ListenerStopped {
+            get {
+                return ResourceManager.GetString("HostLog_ListenerStopped", resourceCulture);
+            }
+        }
+
+        public static string HostLog_ListeningOnPort {
+            get {
+                return ResourceManager.GetString("HostLog_ListeningOnPort", resourceCulture);
+            }
+        }
+
+        public static string HostLog_NoAccessCodeToCopy {
+            get {
+                return ResourceManager.GetString("HostLog_NoAccessCodeToCopy", resourceCulture);
+            }
+        }
+
+        public static string HostLog_QuitRequested {
+            get {
+                return ResourceManager.GetString("HostLog_QuitRequested", resourceCulture);
+            }
+        }
+
+        public static string HostLog_RejectingIncomingConnectionAnotherSession {
+            get {
+                return ResourceManager.GetString("HostLog_RejectingIncomingConnectionAnotherSession", resourceCulture);
+            }
+        }
+
+        public static string HostLog_RejectedDifferentNetwork {
+            get {
+                return ResourceManager.GetString("HostLog_RejectedDifferentNetwork", resourceCulture);
+            }
+        }
+
+        public static string HostLog_SentByeToRemotePeer {
+            get {
+                return ResourceManager.GetString("HostLog_SentByeToRemotePeer", resourceCulture);
+            }
+        }
+
+        public static string HostLog_StartingListenerOnPort {
+            get {
+                return ResourceManager.GetString("HostLog_StartingListenerOnPort", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   Consulta uma cadeia de caracteres localizada semelhante a Not ready to connect.
+        /// </summary>
+        public static string HostForm_StatusNotReady {
+            get {
+                return ResourceManager.GetString("HostForm_StatusNotReady", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   Consulta uma cadeia de caracteres localizada semelhante a Status: Ready to connect.
+        /// </summary>
+        public static string HostForm_StatusReady {
+            get {
+                return ResourceManager.GetString("HostForm_StatusReady", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   Consulta uma cadeia de caracteres localizada semelhante a Support Share.
+        /// </summary>
+        public static string HostForm_Title {
+            get {
+                return ResourceManager.GetString("HostForm_Title", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   Consulta uma cadeia de caracteres localizada semelhante a Your access code.
+        /// </summary>
+        public static string HostForm_YourAccessCode {
+            get {
+                return ResourceManager.GetString("HostForm_YourAccessCode", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   Consulta uma cadeia de caracteres localizada semelhante a Access code:.
+        /// </summary>
+        public static string ViewerForm_AccessCode {
+            get {
+                return ResourceManager.GetString("ViewerForm_AccessCode", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   Consulta uma cadeia de caracteres localizada semelhante a Connect.
+        /// </summary>
+        public static string ViewerForm_Connect {
+            get {
+                return ResourceManager.GetString("ViewerForm_Connect", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   Consulta uma cadeia de caracteres localizada semelhante a Disconnect.
+        /// </summary>
+        public static string ViewerForm_Disconnect {
+            get {
+                return ResourceManager.GetString("ViewerForm_Disconnect", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   Consulta uma cadeia de caracteres localizada semelhante a Status: Disconnected.
+        /// </summary>
+        public static string ViewerForm_StatusDisconnected {
+            get {
+                return ResourceManager.GetString("ViewerForm_StatusDisconnected", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   Consulta uma cadeia de caracteres localizada semelhante a Viewer (Support).
+        /// </summary>
+        public static string ViewerForm_Title {
+            get {
+                return ResourceManager.GetString("ViewerForm_Title", resourceCulture);
+            }
+        }
+        
+        /// <summary>
+        ///   Consulta uma cadeia de caracteres localizada semelhante a Viewer.
+        /// </summary>
+        public static string ViewerForm_WindowTitle {
+            get {
+                return ResourceManager.GetString("ViewerForm_WindowTitle", resourceCulture);
             }
         }
     }
