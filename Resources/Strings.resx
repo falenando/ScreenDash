@@ -58,17 +58,104 @@
   <data name="HostForm_StartSharing" xml:space="preserve">
     <value>Start sharing</value>
   </data>
+  <data name="HostForm_StopSharing" xml:space="preserve">
+    <value>Stop sharing</value>
+  </data>
+  <data name="HostForm_StatusConnected" xml:space="preserve">
+    <value>Connected: {0}</value>
+  </data>
   <data name="HostForm_StatusNotReady" xml:space="preserve">
     <value>Not ready to connect</value>
   </data>
   <data name="HostForm_StatusReady" xml:space="preserve">
     <value>Status: Ready to connect</value>
   </data>
+  <data name="HostForm_StatusWaitingForConnection" xml:space="preserve">
+    <value>Waiting for connection</value>
+  </data>
   <data name="HostForm_Title" xml:space="preserve">
     <value>Support Share</value>
   </data>
   <data name="HostForm_YourAccessCode" xml:space="preserve">
     <value>Your access code</value>
+  </data>
+  <data name="Common_Confirm" xml:space="preserve">
+    <value>Confirm</value>
+  </data>
+  <data name="Common_ErrorWithMessage" xml:space="preserve">
+    <value>Error: {0}</value>
+  </data>
+  <data name="HostMsg_ActiveConnectionWillBeTerminated" xml:space="preserve">
+    <value>An active connection will be terminated. Do you want to continue?</value>
+  </data>
+  <data name="HostLog_AcceptedConnectionFrom" xml:space="preserve">
+    <value>Accepted connection from {0}</value>
+  </data>
+  <data name="HostLog_AccessCode" xml:space="preserve">
+    <value>Access code: {0}</value>
+  </data>
+  <data name="HostLog_ConnectionHandlingError" xml:space="preserve">
+    <value>Connection handling error: {0}</value>
+  </data>
+  <data name="HostLog_CopiedAccessCodeToClipboard" xml:space="preserve">
+    <value>Copied access code to clipboard.</value>
+  </data>
+  <data name="HostLog_CopyFailed" xml:space="preserve">
+    <value>Copy failed: {0}</value>
+  </data>
+  <data name="HostLog_DetectingLocalIPv4" xml:space="preserve">
+    <value>Detecting local IPv4...</value>
+  </data>
+  <data name="HostLog_ErrorCheckingRemoteEndpoint" xml:space="preserve">
+    <value>Error while checking remote endpoint: {0}</value>
+  </data>
+  <data name="HostLog_ErrorSendingByeMessage" xml:space="preserve">
+    <value>Error sending BYE message: {0}</value>
+  </data>
+  <data name="HostLog_ErrorStartingListener" xml:space="preserve">
+    <value>Error starting listener: {0}</value>
+  </data>
+  <data name="HostLog_FailedToStartListener" xml:space="preserve">
+    <value>Failed to start listener: {0}</value>
+  </data>
+  <data name="HostLog_FormClosingStoppingListener" xml:space="preserve">
+    <value>Form closing - stopping listener...</value>
+  </data>
+  <data name="HostLog_GeneratedNewAccessCode" xml:space="preserve">
+    <value>Generated new access code: {0}</value>
+  </data>
+  <data name="HostLog_GeneratingAccessCode" xml:space="preserve">
+    <value>Generating access code...</value>
+  </data>
+  <data name="HostLog_InitializationError" xml:space="preserve">
+    <value>Initialization error: {0}</value>
+  </data>
+  <data name="HostLog_ListenerNotStarted" xml:space="preserve">
+    <value>Listener not started: {0}</value>
+  </data>
+  <data name="HostLog_ListenerStopped" xml:space="preserve">
+    <value>Listener stopped.</value>
+  </data>
+  <data name="HostLog_ListeningOnPort" xml:space="preserve">
+    <value>Listening on port {0}</value>
+  </data>
+  <data name="HostLog_NoAccessCodeToCopy" xml:space="preserve">
+    <value>No access code to copy.</value>
+  </data>
+  <data name="HostLog_QuitRequested" xml:space="preserve">
+    <value>Quit requested by user.</value>
+  </data>
+  <data name="HostLog_RejectingIncomingConnectionAnotherSession" xml:space="preserve">
+    <value>Rejecting incoming connection because another session is active: {0}</value>
+  </data>
+  <data name="HostLog_RejectedDifferentNetwork" xml:space="preserve">
+    <value>Rejected connection from different network: {0}</value>
+  </data>
+  <data name="HostLog_SentByeToRemotePeer" xml:space="preserve">
+    <value>Sent BYE to remote peer.</value>
+  </data>
+  <data name="HostLog_StartingListenerOnPort" xml:space="preserve">
+    <value>Starting listener on port {0}...</value>
   </data>
   <data name="ViewerForm_AccessCode" xml:space="preserve">
     <value>Access code:</value>

@@ -48,25 +48,25 @@ namespace HostApp
             // generate session token and access code, logging each step to UI and file
             try
             {
-                AppendLog("Detecting local IPv4...");
+                AppendLog(ScreenDash.Resources.Strings.HostLog_DetectingLocalIPv4);
                 _sessionToken = GenerateSessionToken();
                 var ip = NetworkHelper.GetLocalIPv4();
 
-                AppendLog("Generating access code...");
+                AppendLog(ScreenDash.Resources.Strings.HostLog_GeneratingAccessCode);
                 var code = _codeService.GenerateCode(ip, _sessionToken);
                 txtTokenRemoto.Text = code;
-                AppendLog("Access code: " + code);
+                AppendLog(string.Format(ScreenDash.Resources.Strings.HostLog_AccessCode, code));
 
-                AppendLog($"Starting listener on port {Port}...");
+                AppendLog(string.Format(ScreenDash.Resources.Strings.HostLog_StartingListenerOnPort, Port));
                 // start listening automatically
                 StartListening();
-                btnStart.Text = "Stop sharing";
+                btnStart.Text = ScreenDash.Resources.Strings.HostForm_StopSharing;
                 // ensure we stop listener when form closes
                 this.FormClosing += HostForm_FormClosing;
             }
             catch (Exception ex)
             {
-                AppendLog("Initialization error: " + ex.Message);
+                AppendLog(string.Format(ScreenDash.Resources.Strings.HostLog_InitializationError, ex.Message));
             }
         }
 
@@ -98,8 +98,8 @@ namespace HostApp
         {
             if (!CanStartListenerWithoutPrompt(Port, out var reason))
             {
-                AppendLog("Listener not started: " + reason);
-                UpdateStatus("Not ready to connect", System.Drawing.Color.Red);
+                AppendLog(string.Format(ScreenDash.Resources.Strings.HostLog_ListenerNotStarted, reason));
+                UpdateStatus(ScreenDash.Resources.Strings.HostForm_StatusNotReady, System.Drawing.Color.Red);
                 _isListening = false;
                 return;
             }
@@ -112,12 +112,12 @@ namespace HostApp
                 _listenerImpl.ConnectionAccepted += socket => _ = Task.Run(() => HandleIncomingSocket(socket));
                 _listenTask = _listenerImpl.StartAsync(_cts.Token);
                 _isListening = true;
-                AppendLog("Listening on port " + Port);
-                UpdateStatus("Waiting for connection", System.Drawing.Color.Orange);
+                AppendLog(string.Format(ScreenDash.Resources.Strings.HostLog_ListeningOnPort, Port));
+                UpdateStatus(ScreenDash.Resources.Strings.HostForm_StatusWaitingForConnection, System.Drawing.Color.Orange);
             }
             catch (Exception ex)
             {
-                AppendLog("Failed to start listener: " + ex.Message);
+                AppendLog(string.Format(ScreenDash.Resources.Strings.HostLog_FailedToStartListener, ex.Message));
                 _isListening = false;
             }
         }
@@ -312,7 +312,7 @@ namespace HostApp
             // enforce only one active connection at a time
             if (_connectionActive)
             {
-                AppendLog("Rejecting incoming connection because another session is active: " + socket.RemoteEndPoint);
+                AppendLog(string.Format(ScreenDash.Resources.Strings.HostLog_RejectingIncomingConnectionAnotherSession, socket.RemoteEndPoint));
                 try { socket.Close(); } catch { }
                 return;
             }
@@ -331,7 +331,7 @@ namespace HostApp
                         // compare first 3 octets (same /24)
                         if (!(localBytes[0] == remoteBytes[0] && localBytes[1] == remoteBytes[1] && localBytes[2] == remoteBytes[2]))
                         {
-                            AppendLog("Rejected connection from different network: " + remoteEp.Address);
+                            AppendLog(string.Format(ScreenDash.Resources.Strings.HostLog_RejectedDifferentNetwork, remoteEp.Address));
                             try { socket.Close(); } catch { }
                             return;
                         }
@@ -340,14 +340,14 @@ namespace HostApp
             }
             catch (Exception ex)
             {
-                AppendLog("Error while checking remote endpoint: " + ex.Message);
+                AppendLog(string.Format(ScreenDash.Resources.Strings.HostLog_ErrorCheckingRemoteEndpoint, ex.Message));
                 try { socket.Close(); } catch { }
                 return;
             }
 
-            AppendLog("Accepted connection from " + socket.RemoteEndPoint);
+            AppendLog(string.Format(ScreenDash.Resources.Strings.HostLog_AcceptedConnectionFrom, socket.RemoteEndPoint));
             _connectionActive = true;
-            UpdateStatus("Connected: " + socket.RemoteEndPoint, System.Drawing.Color.LimeGreen);
+            UpdateStatus(string.Format(ScreenDash.Resources.Strings.HostForm_StatusConnected, socket.RemoteEndPoint), System.Drawing.Color.LimeGreen);
             UpdateRemoteControlIndicator();
 
             try
@@ -360,21 +360,21 @@ namespace HostApp
             }
             catch (Exception ex)
             {
-                AppendLog("Connection handling error: " + ex.Message);
+                AppendLog(string.Format(ScreenDash.Resources.Strings.HostLog_ConnectionHandlingError, ex.Message));
             }
             finally
             {
                 _connectionActive = false;
                 try { _currentSocket?.Close(); } catch { }
                 _currentSocket = null;
-                UpdateStatus("Waiting for connection", System.Drawing.Color.Orange);
+                UpdateStatus(ScreenDash.Resources.Strings.HostForm_StatusWaitingForConnection, System.Drawing.Color.Orange);
                 UpdateRemoteControlIndicator();
             }
         }
 
         private void HostForm_FormClosing(object? sender, FormClosingEventArgs e)
         {
-            AppendLog("Form closing - stopping listener...");
+            AppendLog(ScreenDash.Resources.Strings.HostLog_FormClosingStoppingListener);
             try
             {
                 _cts?.Cancel();
@@ -405,7 +405,7 @@ namespace HostApp
 
         private void btnQuit_Click(object? sender, EventArgs e)
         {
-            AppendLog("Quit requested by user.");
+            AppendLog(ScreenDash.Resources.Strings.HostLog_QuitRequested);
             Application.Exit();
         }
 
@@ -449,7 +449,7 @@ namespace HostApp
                     // Confirm before stopping an active connection
                     if (_connectionActive)
                     {
-                        var result = MessageBox.Show("An active connection will be terminated. Do you want to continue?", "Confirm", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+                        var result = MessageBox.Show(ScreenDash.Resources.Strings.HostMsg_ActiveConnectionWillBeTerminated, ScreenDash.Resources.Strings.Common_Confirm, MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
                         if (result != DialogResult.Yes)
                         {
                             return;
@@ -464,13 +464,13 @@ namespace HostApp
                                 {
                                     using var peer = new TcpPeer(socket, _logger);
                                     await peer.SendAsync("BYE");
-                                    AppendLog("Sent BYE to remote peer.");
+                                    AppendLog(ScreenDash.Resources.Strings.HostLog_SentByeToRemotePeer);
                                 }
                             }
                         }
                         catch (Exception ex)
                         {
-                            AppendLog("Error sending BYE message: " + ex.Message);
+                            AppendLog(string.Format(ScreenDash.Resources.Strings.HostLog_ErrorSendingByeMessage, ex.Message));
                         }
                     }
 
@@ -480,9 +480,9 @@ namespace HostApp
                     try { _currentSocket?.Close(); } catch { }
                     _isListening = false;
                     _connectionActive = false;
-                    UpdateStatus("Not ready to connect", System.Drawing.Color.Red);
-                    btnStart.Text = "Start sharing";
-                    AppendLog("Listener stopped.");
+                    UpdateStatus(ScreenDash.Resources.Strings.HostForm_StatusNotReady, System.Drawing.Color.Red);
+                    btnStart.Text = ScreenDash.Resources.Strings.HostForm_StartSharing;
+                    AppendLog(ScreenDash.Resources.Strings.HostLog_ListenerStopped);
                 }
                 else
                 {
@@ -491,16 +491,16 @@ namespace HostApp
                     var ip = NetworkHelper.GetLocalIPv4();
                     var code = _codeService.GenerateCode(ip, _sessionToken);
                     txtTokenRemoto.Text = code;
-                    AppendLog("Generated new access code: " + code);
+                    AppendLog(string.Format(ScreenDash.Resources.Strings.HostLog_GeneratedNewAccessCode, code));
 
                     StartListening();
-                    btnStart.Text = "Stop sharing";
+                    btnStart.Text = ScreenDash.Resources.Strings.HostForm_StopSharing;
                 }
             }
             catch (Exception ex)
             {
-                AppendLog("Error starting listener: " + ex.Message);
-                MessageBox.Show("Error: " + ex.Message);
+                AppendLog(string.Format(ScreenDash.Resources.Strings.HostLog_ErrorStartingListener, ex.Message));
+                MessageBox.Show(string.Format(ScreenDash.Resources.Strings.Common_ErrorWithMessage, ex.Message));
             }
             finally
             {

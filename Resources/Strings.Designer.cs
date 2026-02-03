@@ -113,6 +113,180 @@ namespace ScreenDash.Resources {
                 return ResourceManager.GetString("HostForm_StartSharing", resourceCulture);
             }
         }
+
+        public static string HostForm_StopSharing {
+            get {
+                return ResourceManager.GetString("HostForm_StopSharing", resourceCulture);
+            }
+        }
+
+        public static string HostForm_StatusConnected {
+            get {
+                return ResourceManager.GetString("HostForm_StatusConnected", resourceCulture);
+            }
+        }
+
+        public static string HostForm_StatusWaitingForConnection {
+            get {
+                return ResourceManager.GetString("HostForm_StatusWaitingForConnection", resourceCulture);
+            }
+        }
+
+        public static string Common_Confirm {
+            get {
+                return ResourceManager.GetString("Common_Confirm", resourceCulture);
+            }
+        }
+
+        public static string Common_ErrorWithMessage {
+            get {
+                return ResourceManager.GetString("Common_ErrorWithMessage", resourceCulture);
+            }
+        }
+
+        public static string HostMsg_ActiveConnectionWillBeTerminated {
+            get {
+                return ResourceManager.GetString("HostMsg_ActiveConnectionWillBeTerminated", resourceCulture);
+            }
+        }
+
+        public static string HostLog_AcceptedConnectionFrom {
+            get {
+                return ResourceManager.GetString("HostLog_AcceptedConnectionFrom", resourceCulture);
+            }
+        }
+
+        public static string HostLog_AccessCode {
+            get {
+                return ResourceManager.GetString("HostLog_AccessCode", resourceCulture);
+            }
+        }
+
+        public static string HostLog_ConnectionHandlingError {
+            get {
+                return ResourceManager.GetString("HostLog_ConnectionHandlingError", resourceCulture);
+            }
+        }
+
+        public static string HostLog_CopiedAccessCodeToClipboard {
+            get {
+                return ResourceManager.GetString("HostLog_CopiedAccessCodeToClipboard", resourceCulture);
+            }
+        }
+
+        public static string HostLog_CopyFailed {
+            get {
+                return ResourceManager.GetString("HostLog_CopyFailed", resourceCulture);
+            }
+        }
+
+        public static string HostLog_DetectingLocalIPv4 {
+            get {
+                return ResourceManager.GetString("HostLog_DetectingLocalIPv4", resourceCulture);
+            }
+        }
+
+        public static string HostLog_ErrorCheckingRemoteEndpoint {
+            get {
+                return ResourceManager.GetString("HostLog_ErrorCheckingRemoteEndpoint", resourceCulture);
+            }
+        }
+
+        public static string HostLog_ErrorSendingByeMessage {
+            get {
+                return ResourceManager.GetString("HostLog_ErrorSendingByeMessage", resourceCulture);
+            }
+        }
+
+        public static string HostLog_ErrorStartingListener {
+            get {
+                return ResourceManager.GetString("HostLog_ErrorStartingListener", resourceCulture);
+            }
+        }
+
+        public static string HostLog_FailedToStartListener {
+            get {
+                return ResourceManager.GetString("HostLog_FailedToStartListener", resourceCulture);
+            }
+        }
+
+        public static string HostLog_FormClosingStoppingListener {
+            get {
+                return ResourceManager.GetString("HostLog_FormClosingStoppingListener", resourceCulture);
+            }
+        }
+
+        public static string HostLog_GeneratedNewAccessCode {
+            get {
+                return ResourceManager.GetString("HostLog_GeneratedNewAccessCode", resourceCulture);
+            }
+        }
+
+        public static string HostLog_GeneratingAccessCode {
+            get {
+                return ResourceManager.GetString("HostLog_GeneratingAccessCode", resourceCulture);
+            }
+        }
+
+        public static string HostLog_InitializationError {
+            get {
+                return ResourceManager.GetString("HostLog_InitializationError", resourceCulture);
+            }
+        }
+
+        public static string HostLog_ListenerNotStarted {
+            get {
+                return ResourceManager.GetString("HostLog_ListenerNotStarted", resourceCulture);
+            }
+        }
+
+        public static string HostLog_ListenerStopped {
+            get {
+                return ResourceManager.GetString("HostLog_ListenerStopped", resourceCulture);
+            }
+        }
+
+        public static string HostLog_ListeningOnPort {
+            get {
+                return ResourceManager.GetString("HostLog_ListeningOnPort", resourceCulture);
+            }
+        }
+
+        public static string HostLog_NoAccessCodeToCopy {
+            get {
+                return ResourceManager.GetString("HostLog_NoAccessCodeToCopy", resourceCulture);
+            }
+        }
+
+        public static string HostLog_QuitRequested {
+            get {
+                return ResourceManager.GetString("HostLog_QuitRequested", resourceCulture);
+            }
+        }
+
+        public static string HostLog_RejectingIncomingConnectionAnotherSession {
+            get {
+                return ResourceManager.GetString("HostLog_RejectingIncomingConnectionAnotherSession", resourceCulture);
+            }
+        }
+
+        public static string HostLog_RejectedDifferentNetwork {
+            get {
+                return ResourceManager.GetString("HostLog_RejectedDifferentNetwork", resourceCulture);
+            }
+        }
+
+        public static string HostLog_SentByeToRemotePeer {
+            get {
+                return ResourceManager.GetString("HostLog_SentByeToRemotePeer", resourceCulture);
+            }
+        }
+
+        public static string HostLog_StartingListenerOnPort {
+            get {
+                return ResourceManager.GetString("HostLog_StartingListenerOnPort", resourceCulture);
+            }
+        }
         
         /// <summary>
         ///   Consulta uma cadeia de caracteres localizada semelhante a Not ready to connect.
