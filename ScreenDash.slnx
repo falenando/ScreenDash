@@ -6,4 +6,6 @@
   <Project Path="RemoteCore/RemoteCore.csproj" />
   <Project Path="ServerRelay/ServerRelay.csproj" />
   <Project Path="ViewerApp/ViewerApp.csproj" />
+  <Project Path="PrivilegedService/PrivilegedService.csproj" />
+  <Project Path="PrivilegedHelper/PrivilegedHelper.csproj" />
 </Solution>
