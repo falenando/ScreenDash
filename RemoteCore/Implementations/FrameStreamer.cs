@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
 using System;
+using System.Text;
 
 namespace RemoteCore.Implementations
 {
@@ -19,17 +20,21 @@ namespace RemoteCore.Implementations
             _logger = logger;
         }
 
-        public async Task StreamToAsync(Socket socket, CancellationToken cancellationToken)
+        public async Task StreamToAsync(Socket socket, CancellationToken cancellationToken, bool skipHandshake = false)
         {
             try
             {
                 using var peer = new TcpPeer(socket, _logger);
-                var msg = await peer.ReceiveAsync();
-                _logger.Log("Received: " + msg);
-                if (msg != "REQUEST_STREAM")
+
+                if (!skipHandshake)
                 {
-                    await peer.SendAsync("WELCOME");
-                    return;
+                    var msg = await NetworkHelper.ReceiveLineAsync(socket, cancellationToken);
+                    _logger.Log("Received: " + msg);
+                    if (!string.Equals(msg, "REQUEST_STREAM", StringComparison.Ordinal))
+                    {
+                        await peer.SendAsync("WELCOME");
+                        return;
+                    }
                 }
 
                 _logger.Log("Starting stream to " + socket.RemoteEndPoint);

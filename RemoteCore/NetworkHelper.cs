@@ -1,6 +1,9 @@
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace RemoteCore
 {
@@ -51,6 +54,26 @@ namespace RemoteCore
             {
                 throw new InvalidOperationException("Failed to detect local IPv4 address.", ex);
             }
+        }
+
+        public static async Task<string> ReceiveLineAsync(Socket socket, CancellationToken cancellationToken)
+        {
+            var buffer = new byte[256];
+            var received = 0;
+
+            while (received < buffer.Length && !cancellationToken.IsCancellationRequested)
+            {
+                var read = await socket.ReceiveAsync(buffer.AsMemory(received), SocketFlags.None);
+                if (read <= 0)
+                    break;
+
+                received += read;
+                var nlIndex = Array.IndexOf(buffer, (byte)'\n', 0, received);
+                if (nlIndex >= 0)
+                    return Encoding.UTF8.GetString(buffer, 0, nlIndex).Trim();
+            }
+
+            return Encoding.UTF8.GetString(buffer, 0, received).Trim();
         }
     }
 }

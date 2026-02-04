@@ -10,5 +10,6 @@
 
 ## Project-Specific Rules
 - Prefere implementar Windows.Graphics.Capture / DXGI Desktop Duplication + H.264 HW encoder + WebRTC para projetos LAN Windows 10/11.
-- O HostApp escuta em TCP na porta 5050 (const Port = 5050); clientes na LAN devem conectar no IP do host usando TCP:5050 e enviar "REQUEST_STREAM" para iniciar o streaming de tela (protocolo: cabeçalho de 8 dígitos ASCII com tamanho do JPEG seguido pelos bytes do JPEG).
+- O HostApp escuta em TCP na porta 5050 (const Port = 5050); clientes na LAN devem conectar no IP do host usando TCP:5050 e enviar "REQUEST_STREAM" para iniciar o streaming de tela (protocolo: cabeçalho de 8 dígitos ASCII com tamanho do JPEG seguido pelos bytes do JPEG). Se a linha do handshake não for "HOST", encaminhar o comando do Viewer como InitialPayload. Se o Relay consumir a linha "REQUEST_STREAM" e não a repassar ao Host, deve encaminhar essa linha como payload inicial.
+- Se a porta TCP 5050 estiver disponível no Host, gerar o access code com o último octeto do IP do Host; caso contrário, gerar com o último octeto do IP do servidor Relay definido em hostconfig.json. O ServerRelay permanecerá como está (uma sessão por vez, sem multiplexação).
 - Workspace targets .NET 10 and ServerRelay should be published for linux-x64 or use installed .NET 10 runtime.

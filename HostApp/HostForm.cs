@@ -45,18 +45,10 @@ namespace HostApp
             btnQuit.Click += btnQuit_Click;
             btnCopyCode.Click += btnCopyCode_Click;
 
-            // generate session token and access code, logging each step to UI and file
+            // generate session token and start listening; access code is set based on local/relay decision
             try
             {
-                AppendLog(ScreenDash.Resources.Strings.HostLog_DetectingLocalIPv4);
                 _sessionToken = GenerateSessionToken();
-                var ip = NetworkHelper.GetLocalIPv4();
-
-                AppendLog(ScreenDash.Resources.Strings.HostLog_GeneratingAccessCode);
-                var code = _codeService.GenerateCode(ip, _sessionToken);
-                txtTokenRemoto.Text = code;
-                AppendLog(string.Format(ScreenDash.Resources.Strings.HostLog_AccessCode, code));
-
                 AppendLog(string.Format(ScreenDash.Resources.Strings.HostLog_StartingListenerOnPort, Port));
                 // start listening automatically
                 StartListening();
@@ -94,7 +86,7 @@ namespace HostApp
             }
         }
 
-        private void StartListening()
+        private void StartListening(bool isManualStart = false)
         {
             if (Port <= 0 || Port > 65535)
             {
@@ -108,14 +100,28 @@ namespace HostApp
             if (!IsTcpPortFree(Port))
             {
                 AppendLog($"Port {Port} is already in use. Trying relay server...");
-                StartRelayConnection();
+                StartRelayConnection(isManualStart);
                 return;
             }
 
             if (!IsFirewallInboundAllowedForThisAppOrPort(Port))
             {
-                var reason = $"Windows Firewall inbound rule not found/enabled for TCP port {Port} (or this app). Ask an administrator to allow it, then try again.";
+                var reason = $"Windows Firewall inbound rule not found/enabled for TCP port {Port} (or this app).";
                 AppendLog(string.Format(ScreenDash.Resources.Strings.HostLog_ListenerNotStarted, reason));
+                AppendLog("Inbound firewall rule is missing; trying relay server...");
+                StartRelayConnection(isManualStart);
+                return;
+            }
+
+            try
+            {
+                AppendLog(ScreenDash.Resources.Strings.HostLog_DetectingLocalIPv4);
+                var ip = NetworkHelper.GetLocalIPv4();
+                SetAccessCode(ip, isManualStart);
+            }
+            catch (Exception ex)
+            {
+                AppendLog(string.Format(ScreenDash.Resources.Strings.HostLog_InitializationError, ex.Message));
                 UpdateStatus(ScreenDash.Resources.Strings.HostForm_StatusNotReady, System.Drawing.Color.Red);
                 _isListening = false;
                 return;
@@ -139,7 +145,7 @@ namespace HostApp
             }
         }
 
-        private void StartRelayConnection()
+        private void StartRelayConnection(bool isManualStart)
         {
             var relayServer = RemoteCore.Config.GetStringFromFile("hostconfig.json", "RelayServer", string.Empty);
             if (string.IsNullOrWhiteSpace(relayServer))
@@ -151,6 +157,19 @@ namespace HostApp
             }
 
             _cts = new System.Threading.CancellationTokenSource();
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    var relayIp = await ResolveRelayAddressAsync(relayServer, _cts.Token);
+                    AppendLog($"Resolved relay server to {relayIp} for access code.");
+                    SetAccessCode(relayIp, isManualStart);
+                }
+                catch (Exception ex)
+                {
+                    AppendLog("Relay server address could not be resolved for access code: " + ex.Message);
+                }
+            });
             _listenTask = Task.Run(() => ConnectToRelayAsync(relayServer, Port, _cts.Token));
             UpdateStatus(ScreenDash.Resources.Strings.HostForm_StatusWaitingForConnection, System.Drawing.Color.Orange);
         }
@@ -179,7 +198,7 @@ namespace HostApp
                 _isListening = true;
                 AppendLog($"Connected to relay server {relayServer}:{port}.");
 
-                var handshake = Encoding.UTF8.GetBytes("HOST\n");
+                var handshake = Encoding.ASCII.GetBytes("HOST\n");
                 await socket.SendAsync(handshake, SocketFlags.None);
 
                 await HandleIncomingSocket(socket, skipNetworkCheck: true);
@@ -441,10 +460,41 @@ namespace HostApp
             try
             {
                 var streamToken = _cts?.Token ?? System.Threading.CancellationToken.None;
-                var inputTask = Task.Run(() => ReceiveInputLoopAsync(socket, streamToken), streamToken);
-                var streamer = new RemoteCore.Implementations.FrameStreamer(_capturer, _encoder, _logger);
-                await streamer.StreamToAsync(socket, streamToken);
-                await inputTask;
+
+                if (skipNetworkCheck)
+                {
+                    // Relay path: start streaming immediately (handshake already forwarded via relay initial payload)
+                    AppendLog("Relay connection: starting stream without local handshake wait.");
+                    var inputTask = Task.Run(() => ReceiveInputLoopAsync(socket, streamToken, null), streamToken);
+                    var streamer = new RemoteCore.Implementations.FrameStreamer(_capturer, _encoder, _logger);
+                    await streamer.StreamToAsync(socket, streamToken, skipHandshake: true);
+                    await inputTask;
+                }
+                else
+                {
+                    var handshakeTcs = new TaskCompletionSource<bool>();
+
+                    // Start input loop which will handle the handshake first
+                    var inputTask = Task.Run(() => ReceiveInputLoopAsync(socket, streamToken, handshakeTcs), streamToken);
+
+                    // Wait for the REQUEST_STREAM handshake signal from input loop
+                    var handshakeTimeout = Task.Delay(10000, streamToken);
+                    var completedTask = await Task.WhenAny(handshakeTcs.Task, handshakeTimeout);
+
+                    if (completedTask == handshakeTcs.Task && handshakeTcs.Task.Result)
+                    {
+                        AppendLog("Stream requested by remote peer.");
+                        var streamer = new RemoteCore.Implementations.FrameStreamer(_capturer, _encoder, _logger);
+                        await streamer.StreamToAsync(socket, streamToken, skipHandshake: true);
+                    }
+                    else
+                    {
+                        AppendLog("Handshake timeout or failed. Closing connection.");
+                        try { socket.Close(); } catch { }
+                    }
+
+                    await inputTask;
+                }
             }
             catch (Exception ex)
             {
@@ -526,6 +576,26 @@ namespace HostApp
             return (ushort)((bytes[0] << 8) | bytes[1]);
         }
 
+        private void SetAccessCode(IPAddress ip, bool isManualStart)
+        {
+            AppendLog(ScreenDash.Resources.Strings.HostLog_GeneratingAccessCode);
+            var code = _codeService.GenerateCode(ip, _sessionToken);
+            var logFormat = isManualStart
+                ? ScreenDash.Resources.Strings.HostLog_GeneratedNewAccessCode
+                : ScreenDash.Resources.Strings.HostLog_AccessCode;
+
+            if (txtTokenRemoto.InvokeRequired)
+            {
+                txtTokenRemoto.Invoke(() => txtTokenRemoto.Text = code);
+            }
+            else
+            {
+                txtTokenRemoto.Text = code;
+            }
+
+            AppendLog(string.Format(logFormat, code));
+        }
+
         private async void btnStart_Click(object sender, EventArgs e)
         {
             // start listening manually if user clicks Start
@@ -574,14 +644,9 @@ namespace HostApp
                 }
                 else
                 {
-                    // generate new session token and code
+                    // generate new session token and start listening
                     _sessionToken = GenerateSessionToken();
-                    var ip = NetworkHelper.GetLocalIPv4();
-                    var code = _codeService.GenerateCode(ip, _sessionToken);
-                    txtTokenRemoto.Text = code;
-                    AppendLog(string.Format(ScreenDash.Resources.Strings.HostLog_GeneratedNewAccessCode, code));
-
-                    StartListening();
+                    StartListening(isManualStart: true);
                     btnStart.Text = ScreenDash.Resources.Strings.HostForm_StopSharing;
                 }
             }
@@ -660,7 +725,7 @@ namespace HostApp
             lblRemoteControlStatus.ForeColor = color;
         }
 
-        private async Task ReceiveInputLoopAsync(Socket socket, System.Threading.CancellationToken token)
+        private async Task ReceiveInputLoopAsync(Socket socket, System.Threading.CancellationToken token, TaskCompletionSource<bool>? handshakeTcs)
         {
             var buffer = new byte[4096];
             var sb = new StringBuilder();
@@ -684,13 +749,25 @@ namespace HostApp
                         var line = text.Substring(0, newlineIndex).Trim();
                         sb.Remove(0, newlineIndex + 1);
                         if (!string.IsNullOrEmpty(line))
+                        {
+                            if (handshakeTcs != null && line.Equals("REQUEST_STREAM", StringComparison.OrdinalIgnoreCase))
+                            {
+                                handshakeTcs.TrySetResult(true);
+                                continue;
+                            }
                             HandleInputCommand(line);
+                        }
                     }
                 }
             }
             catch
             {
+                handshakeTcs?.TrySetResult(false);
                 // ignore input loop errors
+            }
+            finally
+            {
+                handshakeTcs?.TrySetResult(false);
             }
         }
 

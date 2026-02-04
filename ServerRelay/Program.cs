@@ -87,6 +87,8 @@ internal sealed class TcpRelayServer
                 return;
             }
 
+            Console.WriteLine($"{role} connected from {socket.RemoteEndPoint}. Initial payload: {(initialPayload?.Length ?? 0)} bytes.");
+
             lock (_sync)
             {
                 if (role == ConnectionRole.Host)
@@ -126,21 +128,64 @@ internal sealed class TcpRelayServer
 
     private async Task<(ConnectionRole Role, byte[]? InitialPayload)> IdentifyRoleAsync(Socket socket, CancellationToken token)
     {
-        var buffer = new byte[16];
-        var readTask = socket.ReceiveAsync(buffer, SocketFlags.None);
-        var completed = await Task.WhenAny(readTask, Task.Delay(1000, token));
-        if (completed != readTask)
-            return (ConnectionRole.Viewer, null);
+        // Handshake determinístico por linha: "HOST\n".
+        // Qualquer coisa diferente é Viewer.
+        // Bytes extras após '\n' viram InitialPayload (serão encaminhados).
+        var buffer = new byte[256];
+        var received = 0;
 
-        var read = await readTask;
-        if (read <= 0)
-            return (ConnectionRole.Unknown, null);
+        while (received < buffer.Length)
+        {
+            var readTask = socket.ReceiveAsync(buffer.AsMemory(received), SocketFlags.None).AsTask();
+            var completed = await Task.WhenAny(readTask, Task.Delay(3000, token));
+            if (completed != readTask)
+            {
+                Console.WriteLine("Handshake timeout; treating as Viewer.");
+                return (ConnectionRole.Viewer, null);
+            }
 
-        var text = Encoding.ASCII.GetString(buffer, 0, read);
-        if (text.StartsWith("HOST", StringComparison.OrdinalIgnoreCase))
-            return (ConnectionRole.Host, null);
+            var read = await readTask;
+            if (read <= 0)
+            {
+                Console.WriteLine("Handshake read returned 0 bytes.");
+                return (ConnectionRole.Unknown, null);
+            }
 
-        return (ConnectionRole.Viewer, buffer.AsSpan(0, read).ToArray());
+            received += read;
+
+            var nlIndex = Array.IndexOf(buffer, (byte)'\n', 0, received);
+            if (nlIndex < 0)
+                continue;
+
+            var line = Encoding.ASCII.GetString(buffer, 0, nlIndex).Trim();
+            var extraCount = received - (nlIndex + 1);
+            byte[]? extra = extraCount > 0
+                ? buffer.AsSpan(nlIndex + 1, extraCount).ToArray()
+                : null;
+
+            if (line.Equals("HOST", StringComparison.OrdinalIgnoreCase))
+                return (ConnectionRole.Host, extra);
+
+            var lineBytes = Encoding.UTF8.GetBytes(line + "\n");
+            var payload = extra == null || extra.Length == 0
+                ? lineBytes
+                : CombinePayload(lineBytes, extra);
+
+            Console.WriteLine($"Handshake line '{line}' treated as Viewer. Forwarding {payload.Length} bytes.");
+            return (ConnectionRole.Viewer, payload);
+        }
+
+        // Sem '\n' -> trata como Viewer e encaminha o que tiver.
+        Console.WriteLine($"Handshake without newline; treating as Viewer. Bytes: {received}.");
+        return (ConnectionRole.Viewer, buffer.AsSpan(0, received).ToArray());
+    }
+
+    private static byte[] CombinePayload(byte[] first, byte[] second)
+    {
+        var combined = new byte[first.Length + second.Length];
+        Buffer.BlockCopy(first, 0, combined, 0, first.Length);
+        Buffer.BlockCopy(second, 0, combined, first.Length, second.Length);
+        return combined;
     }
 
     private void StartRelayIfReady()
@@ -152,26 +197,36 @@ internal sealed class TcpRelayServer
         var token = _relayCts.Token;
 
         _relayTask = Task.WhenAll(
-                PipeAsync(_host.Socket, _viewer.Socket, null, token),
-                PipeAsync(_viewer.Socket, _host.Socket, _viewer.InitialPayload, token))
+                PipeAsync(_host.Socket, _viewer.Socket, null, token, "Host->Viewer"),
+                PipeAsync(_viewer.Socket, _host.Socket, _viewer.InitialPayload, token, "Viewer->Host"))
             .ContinueWith(_ => CleanupSession(), TaskScheduler.Default);
 
         Console.WriteLine("Relay session started.");
     }
 
-    private async Task PipeAsync(Socket source, Socket destination, byte[]? initialPayload, CancellationToken token)
+    private async Task PipeAsync(Socket source, Socket destination, byte[]? initialPayload, CancellationToken token, string label)
     {
         try
         {
             if (initialPayload is { Length: > 0 })
+            {
+                Console.WriteLine($"{label} initial payload: {initialPayload.Length} bytes.");
                 await destination.SendAsync(initialPayload, SocketFlags.None);
+            }
 
             var buffer = new byte[8192];
+            var firstRead = true;
             while (!token.IsCancellationRequested)
             {
                 var read = await source.ReceiveAsync(buffer, SocketFlags.None);
                 if (read <= 0)
                     break;
+
+                if (firstRead)
+                {
+                    Console.WriteLine($"{label} first read: {read} bytes.");
+                    firstRead = false;
+                }
 
                 await destination.SendAsync(buffer.AsMemory(0, read), SocketFlags.None);
             }
@@ -181,6 +236,7 @@ internal sealed class TcpRelayServer
         }
         finally
         {
+            Console.WriteLine($"{label} pipe ended.");
             _relayCts?.Cancel();
         }
     }
