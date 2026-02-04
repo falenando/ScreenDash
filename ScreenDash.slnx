@@ -4,5 +4,6 @@
   </Configurations>
   <Project Path="HostApp/HostApp.csproj" />
   <Project Path="RemoteCore/RemoteCore.csproj" />
+  <Project Path="ServerRelay/ServerRelay.csproj" />
   <Project Path="ViewerApp/ViewerApp.csproj" />
 </Solution>

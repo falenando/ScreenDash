@@ -96,8 +96,25 @@ namespace HostApp
 
         private void StartListening()
         {
-            if (!CanStartListenerWithoutPrompt(Port, out var reason))
+            if (Port <= 0 || Port > 65535)
             {
+                var reason = $"Invalid port: {Port}.";
+                AppendLog(string.Format(ScreenDash.Resources.Strings.HostLog_ListenerNotStarted, reason));
+                UpdateStatus(ScreenDash.Resources.Strings.HostForm_StatusNotReady, System.Drawing.Color.Red);
+                _isListening = false;
+                return;
+            }
+
+            if (!IsTcpPortFree(Port))
+            {
+                AppendLog($"Port {Port} is already in use. Trying relay server...");
+                StartRelayConnection();
+                return;
+            }
+
+            if (!IsFirewallInboundAllowedForThisAppOrPort(Port))
+            {
+                var reason = $"Windows Firewall inbound rule not found/enabled for TCP port {Port} (or this app). Ask an administrator to allow it, then try again.";
                 AppendLog(string.Format(ScreenDash.Resources.Strings.HostLog_ListenerNotStarted, reason));
                 UpdateStatus(ScreenDash.Resources.Strings.HostForm_StatusNotReady, System.Drawing.Color.Red);
                 _isListening = false;
@@ -109,7 +126,7 @@ namespace HostApp
             try
             {
                 _listenerImpl = new TcpNetworkListener(Port);
-                _listenerImpl.ConnectionAccepted += socket => _ = Task.Run(() => HandleIncomingSocket(socket));
+                _listenerImpl.ConnectionAccepted += socket => _ = Task.Run(() => HandleIncomingSocket(socket, skipNetworkCheck: false));
                 _listenTask = _listenerImpl.StartAsync(_cts.Token);
                 _isListening = true;
                 AppendLog(string.Format(ScreenDash.Resources.Strings.HostLog_ListeningOnPort, Port));
@@ -120,6 +137,74 @@ namespace HostApp
                 AppendLog(string.Format(ScreenDash.Resources.Strings.HostLog_FailedToStartListener, ex.Message));
                 _isListening = false;
             }
+        }
+
+        private void StartRelayConnection()
+        {
+            var relayServer = RemoteCore.Config.GetStringFromFile("hostconfig.json", "RelayServer", string.Empty);
+            if (string.IsNullOrWhiteSpace(relayServer))
+            {
+                AppendLog("Relay server address is not configured in hostconfig.json.");
+                UpdateStatus(ScreenDash.Resources.Strings.HostForm_StatusNotReady, System.Drawing.Color.Red);
+                _isListening = false;
+                return;
+            }
+
+            _cts = new System.Threading.CancellationTokenSource();
+            _listenTask = Task.Run(() => ConnectToRelayAsync(relayServer, Port, _cts.Token));
+            UpdateStatus(ScreenDash.Resources.Strings.HostForm_StatusWaitingForConnection, System.Drawing.Color.Orange);
+        }
+
+        private async Task ConnectToRelayAsync(string relayServer, int port, System.Threading.CancellationToken token)
+        {
+            try
+            {
+                var relayIp = await ResolveRelayAddressAsync(relayServer, token);
+                using var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+                var connectTask = socket.ConnectAsync(relayIp, port);
+                var timeoutTask = Task.Delay(5000, token);
+                var completed = await Task.WhenAny(connectTask, timeoutTask);
+                if (completed == timeoutTask)
+                {
+                    AppendLog($"Relay connection timeout to {relayServer}:{port}.");
+                    UpdateStatus(ScreenDash.Resources.Strings.HostForm_StatusNotReady, System.Drawing.Color.Red);
+                    _isListening = false;
+                    return;
+                }
+
+                await connectTask;
+                if (token.IsCancellationRequested)
+                    return;
+
+                _isListening = true;
+                AppendLog($"Connected to relay server {relayServer}:{port}.");
+
+                var handshake = Encoding.UTF8.GetBytes("HOST\n");
+                await socket.SendAsync(handshake, SocketFlags.None);
+
+                await HandleIncomingSocket(socket, skipNetworkCheck: true);
+            }
+            catch (Exception ex)
+            {
+                AppendLog("Relay connection failed: " + ex.Message);
+                UpdateStatus(ScreenDash.Resources.Strings.HostForm_StatusNotReady, System.Drawing.Color.Red);
+                _isListening = false;
+            }
+        }
+
+        private static async Task<IPAddress> ResolveRelayAddressAsync(string relayServer, System.Threading.CancellationToken token)
+        {
+            if (IPAddress.TryParse(relayServer, out var ip))
+                return ip;
+
+            var addresses = await Dns.GetHostAddressesAsync(relayServer, token);
+            foreach (var addr in addresses)
+            {
+                if (addr.AddressFamily == AddressFamily.InterNetwork)
+                    return addr;
+            }
+
+            throw new InvalidOperationException("Relay server address could not be resolved.");
         }
 
         private bool CanStartListenerWithoutPrompt(int port, out string reason)
@@ -305,7 +390,7 @@ namespace HostApp
 
             return false;
         }
-        private async Task HandleIncomingSocket(Socket socket)
+        private async Task HandleIncomingSocket(Socket socket, bool skipNetworkCheck)
         {
             _currentSocket = socket;
 
@@ -318,31 +403,34 @@ namespace HostApp
             }
 
             // accept only connections from same /24 network as local
-            try
+            if (!skipNetworkCheck)
             {
-                var remoteEp = socket.RemoteEndPoint as IPEndPoint;
-                if (remoteEp != null)
+                try
                 {
-                    var localIp = NetworkHelper.GetLocalIPv4();
-                    var localBytes = localIp.GetAddressBytes();
-                    var remoteBytes = remoteEp.Address.GetAddressBytes();
-                    if (localBytes.Length == 4 && remoteBytes.Length == 4)
+                    var remoteEp = socket.RemoteEndPoint as IPEndPoint;
+                    if (remoteEp != null)
                     {
-                        // compare first 3 octets (same /24)
-                        if (!(localBytes[0] == remoteBytes[0] && localBytes[1] == remoteBytes[1] && localBytes[2] == remoteBytes[2]))
+                        var localIp = NetworkHelper.GetLocalIPv4();
+                        var localBytes = localIp.GetAddressBytes();
+                        var remoteBytes = remoteEp.Address.GetAddressBytes();
+                        if (localBytes.Length == 4 && remoteBytes.Length == 4)
                         {
-                            AppendLog(string.Format(ScreenDash.Resources.Strings.HostLog_RejectedDifferentNetwork, remoteEp.Address));
-                            try { socket.Close(); } catch { }
-                            return;
+                            // compare first 3 octets (same /24)
+                            if (!(localBytes[0] == remoteBytes[0] && localBytes[1] == remoteBytes[1] && localBytes[2] == remoteBytes[2]))
+                            {
+                                AppendLog(string.Format(ScreenDash.Resources.Strings.HostLog_RejectedDifferentNetwork, remoteEp.Address));
+                                try { socket.Close(); } catch { }
+                                return;
+                            }
                         }
                     }
                 }
-            }
-            catch (Exception ex)
-            {
-                AppendLog(string.Format(ScreenDash.Resources.Strings.HostLog_ErrorCheckingRemoteEndpoint, ex.Message));
-                try { socket.Close(); } catch { }
-                return;
+                catch (Exception ex)
+                {
+                    AppendLog(string.Format(ScreenDash.Resources.Strings.HostLog_ErrorCheckingRemoteEndpoint, ex.Message));
+                    try { socket.Close(); } catch { }
+                    return;
+                }
             }
 
             AppendLog(string.Format(ScreenDash.Resources.Strings.HostLog_AcceptedConnectionFrom, socket.RemoteEndPoint));
