@@ -26,10 +26,41 @@ namespace HostApp
         private Socket? _currentSocket;
         private ushort _sessionToken;
         private readonly AccessCodeService _codeService = new AccessCodeService();
+        private RemoteSupportServiceClient? _serviceClient;
+        private bool _useService = false;
 
         public HostForm()
             : this(new RemoteCore.Implementations.ScreenCapturerDesktopDuplication(), new RemoteCore.Implementations.JpegFrameEncoder(50, 1024), new RemoteCore.ConnectionLogger("host.log"))
         {
+        }
+
+        private void TryEnableService()
+        {
+            _useService = false;
+            _serviceClient?.Dispose();
+            _serviceClient = RemoteSupportServiceClient.TryConnect(500);
+            if (_serviceClient == null)
+                return;
+
+            try
+            {
+                var ok = _serviceClient.HealthCheckAsync().GetAwaiter().GetResult();
+                if (ok)
+                {
+                    _useService = true;
+                    AppendLog("RemoteSupport.Service detected. Using service for capture/input.");
+                }
+                else
+                {
+                    _serviceClient.Dispose();
+                    _serviceClient = null;
+                }
+            }
+            catch
+            {
+                _serviceClient?.Dispose();
+                _serviceClient = null;
+            }
         }
 
         // DI constructor
@@ -97,6 +128,8 @@ namespace HostApp
                 return;
             }
 
+            TryEnableService();
+
             if (!IsTcpPortFree(Port))
             {
                 AppendLog($"Port {Port} is already in use. Trying relay server...");
@@ -155,6 +188,8 @@ namespace HostApp
                 _isListening = false;
                 return;
             }
+
+            TryEnableService();
 
             _cts = new System.Threading.CancellationTokenSource();
             _ = Task.Run(async () =>
@@ -466,8 +501,18 @@ namespace HostApp
                     // Relay path: start streaming immediately (handshake already forwarded via relay initial payload)
                     AppendLog("Relay connection: starting stream without local handshake wait.");
                     var inputTask = Task.Run(() => ReceiveInputLoopAsync(socket, streamToken, null), streamToken);
-                    var streamer = new RemoteCore.Implementations.FrameStreamer(_capturer, _encoder, _logger);
-                    await streamer.StreamToAsync(socket, streamToken, skipHandshake: true);
+
+                    if (_useService && _serviceClient != null)
+                    {
+                        await _serviceClient.StartSessionAsync(txtTokenRemoto.Text);
+                        await StreamFromServiceAsync(socket, streamToken);
+                    }
+                    else
+                    {
+                        var streamer = new RemoteCore.Implementations.FrameStreamer(_capturer, _encoder, _logger);
+                        await streamer.StreamToAsync(socket, streamToken, skipHandshake: true);
+                    }
+
                     await inputTask;
                 }
                 else
@@ -484,8 +529,16 @@ namespace HostApp
                     if (completedTask == handshakeTcs.Task && handshakeTcs.Task.Result)
                     {
                         AppendLog("Stream requested by remote peer.");
-                        var streamer = new RemoteCore.Implementations.FrameStreamer(_capturer, _encoder, _logger);
-                        await streamer.StreamToAsync(socket, streamToken, skipHandshake: true);
+                        if (_useService && _serviceClient != null)
+                        {
+                            await _serviceClient.StartSessionAsync(txtTokenRemoto.Text);
+                            await StreamFromServiceAsync(socket, streamToken);
+                        }
+                        else
+                        {
+                            var streamer = new RemoteCore.Implementations.FrameStreamer(_capturer, _encoder, _logger);
+                            await streamer.StreamToAsync(socket, streamToken, skipHandshake: true);
+                        }
                     }
                     else
                     {
@@ -502,11 +555,35 @@ namespace HostApp
             }
             finally
             {
+                if (_useService && _serviceClient != null)
+                {
+                    try { await _serviceClient.StopSessionAsync(); } catch { }
+                }
                 _connectionActive = false;
                 try { _currentSocket?.Close(); } catch { }
                 _currentSocket = null;
                 UpdateStatus(ScreenDash.Resources.Strings.HostForm_StatusWaitingForConnection, System.Drawing.Color.Orange);
                 UpdateRemoteControlIndicator();
+            }
+        }
+
+        private async Task StreamFromServiceAsync(Socket socket, System.Threading.CancellationToken token)
+        {
+            while (socket.Connected && !token.IsCancellationRequested)
+            {
+                var frame = await _serviceClient!.RequestFrameAsync();
+                if (frame == null || frame.Length == 0)
+                    break;
+
+                var header = Encoding.ASCII.GetBytes(frame.Length.ToString("D8"));
+                await socket.SendAsync(header, SocketFlags.None);
+                var sent = 0;
+                while (sent < frame.Length)
+                {
+                    sent += await socket.SendAsync(new ArraySegment<byte>(frame, sent, frame.Length - sent), SocketFlags.None);
+                }
+
+                await Task.Delay(200, token).ContinueWith(_ => { });
             }
         }
 
@@ -755,7 +832,16 @@ namespace HostApp
                                 handshakeTcs.TrySetResult(true);
                                 continue;
                             }
-                            HandleInputCommand(line);
+
+                            if (_useService && _serviceClient != null)
+                            {
+                                if (IsRemoteInputAllowed() && line.StartsWith("INPUT|", StringComparison.OrdinalIgnoreCase))
+                                    await _serviceClient.SendInputAsync(line);
+                            }
+                            else
+                            {
+                                HandleInputCommand(line);
+                            }
                         }
                     }
                 }

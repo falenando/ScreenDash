@@ -7,5 +7,6 @@
   <Project Path="ServerRelay/ServerRelay.csproj" />
   <Project Path="ViewerApp/ViewerApp.csproj" />
   <Project Path="PrivilegedService/PrivilegedService.csproj" />
+  <Project Path="Installer.Velopack/Installer.Velopack.csproj" />
   <Project Path="PrivilegedHelper/PrivilegedHelper.csproj" />
 </Solution>
