@@ -1,15 +1,85 @@
 param(
-    [string]$InstallDir = "C:\Program Files\ScreenDash\RemoteSupport.Service"
+    [string]$InstallDir
 )
 
-$serviceName = "ScreenDash.RemoteSupport"
-$exePath = Join-Path $InstallDir "RemoteSupport.Service.exe"
+$ErrorActionPreference = "Stop"
 
-if (Get-Service -Name $serviceName -ErrorAction SilentlyContinue) {
-    Stop-Service -Name $serviceName -Force -ErrorAction SilentlyContinue
-    sc.exe delete $serviceName | Out-Null
+if ([string]::IsNullOrWhiteSpace($InstallDir)) {
+    $InstallDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 }
 
-sc.exe create $serviceName binPath= "`"$exePath`"" start= auto obj= LocalSystem | Out-Null
-sc.exe description $serviceName "ScreenDash RemoteSupport Service" | Out-Null
-sc.exe start $serviceName | Out-Null
+function New-InstallLogPaths {
+    $stamp = Get-Date -Format "yyyyMMdd_HHmmss"
+    $fileName = "ScreenDash_Install_${stamp}.log"
+
+    $paths = @()
+    if (-not [string]::IsNullOrWhiteSpace($env:TEMP)) {
+        $paths += (Join-Path $env:TEMP $fileName)
+    }
+
+    $programDataLogDir = Join-Path $env:ProgramData "ScreenDash\logs"
+    try {
+        New-Item -ItemType Directory -Force $programDataLogDir | Out-Null
+        $paths += (Join-Path $programDataLogDir $fileName)
+    } catch {
+        # ignore
+    }
+
+    return $paths
+}
+
+$logPaths = New-InstallLogPaths
+
+function Write-InstallLog {
+    param([string]$Message)
+    $entry = "$(Get-Date -Format o) - $Message"
+    foreach ($path in $logPaths) {
+        try {
+            Add-Content -Path $path -Value $entry
+        } catch {
+            # ignore logging failures to avoid breaking install hook
+        }
+    }
+}
+
+$serviceName = "ScreenDash.Privileged"
+$exePath = Join-Path $InstallDir "PrivilegedService\PrivilegedService.exe"
+
+Write-InstallLog "Install started. InstallDir: $InstallDir"
+Write-InstallLog "Checking executable path: $exePath"
+
+try {
+    if (-not (Test-Path $exePath)) {
+        Write-InstallLog "ERROR: Executable not found at $exePath"
+        throw "Executable not found: $exePath"
+    }
+
+    if (Get-Service -Name $serviceName -ErrorAction SilentlyContinue) {
+        Write-InstallLog "Service $serviceName exists. Stopping and deleting."
+        Stop-Service -Name $serviceName -Force -ErrorAction SilentlyContinue
+        $deleteOutput = sc.exe delete $serviceName 2>&1
+        Write-InstallLog "sc.exe delete output: $deleteOutput"
+    }
+
+    $createOutput = sc.exe create $serviceName binPath= "`"$exePath`"" start= auto obj= LocalSystem 2>&1
+    Write-InstallLog "sc.exe create output: $createOutput"
+
+    $descriptionOutput = sc.exe description $serviceName "ScreenDash Privileged Service" 2>&1
+    Write-InstallLog "sc.exe description output: $descriptionOutput"
+
+    $startOutput = sc.exe start $serviceName 2>&1
+    Write-InstallLog "sc.exe start output: $startOutput"
+    Write-InstallLog "Install hook completed successfully."
+}
+catch {
+    Write-InstallLog "ERROR during install hook: $_"
+    Write-InstallLog "Full exception: $($_ | Out-String)"
+    throw
+}
+finally {
+    if ($logPaths.Count -gt 0) {
+        Write-InstallLog "Install finished. Log file(s): $($logPaths -join '; ')"
+    } else {
+        Write-InstallLog "Install finished. (No log file path available)"
+    }
+}

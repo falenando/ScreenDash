@@ -15,6 +15,10 @@
   <ItemGroup>
     <ProjectReference Include="..\RemoteCore\RemoteCore.csproj" />
   </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Velopack" Version="0.0.1298" />
+  </ItemGroup>
   <ItemGroup>
     <None Update="hostconfig.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

@@ -1,6 +1,7 @@
 using System;
 using System.Windows.Forms;
 using RemoteCore;
+using Velopack;
 
 namespace HostApp
 {
@@ -9,6 +10,8 @@ namespace HostApp
         [STAThread]
         static void Main()
         {
+            VelopackApp.Build().Run();
+
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
 

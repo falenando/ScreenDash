@@ -1,8 +1,14 @@
 param(
-    [string]$InstallDir = "C:\Program Files\ScreenDash\RemoteSupport.Service"
+    [string]$InstallDir
 )
 
-$serviceName = "ScreenDash.RemoteSupport"
+$ErrorActionPreference = "Stop"
+
+if ([string]::IsNullOrWhiteSpace($InstallDir)) {
+    $InstallDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+}
+
+$serviceName = "ScreenDash.Privileged"
 
 if (Get-Service -Name $serviceName -ErrorAction SilentlyContinue) {
     Stop-Service -Name $serviceName -Force -ErrorAction SilentlyContinue
