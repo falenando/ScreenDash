@@ -41,8 +41,18 @@ namespace RemoteCore.Implementations
 
                 while (socket.Connected && !cancellationToken.IsCancellationRequested)
                 {
-                    using var bmp = await _capturer.CaptureAsync();
-                    var jpg = await _encoder.EncodeAsync(bmp);
+                    byte[] jpg;
+                    try
+                    {
+                        using var bmp = await _capturer.CaptureAsync();
+                        jpg = await _encoder.EncodeAsync(bmp);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.Log("Frame capture error: " + ex.Message);
+                        using var fallback = new System.Drawing.Bitmap(1, 1);
+                        jpg = await _encoder.EncodeAsync(fallback);
+                    }
                     var header = System.Text.Encoding.ASCII.GetBytes(jpg.Length.ToString("D8"));
                     await peer.SendAsync(System.Text.Encoding.ASCII.GetString(header));
                     var sent = 0;

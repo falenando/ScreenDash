@@ -8,7 +8,7 @@ if ([string]::IsNullOrWhiteSpace($InstallDir)) {
     $InstallDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 }
 
-$serviceName = "ScreenDash.Privileged"
+$serviceName = "RemoteSupport.Service"
 
 if (Get-Service -Name $serviceName -ErrorAction SilentlyContinue) {
     Stop-Service -Name $serviceName -Force -ErrorAction SilentlyContinue

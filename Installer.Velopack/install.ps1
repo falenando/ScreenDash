@@ -17,6 +17,16 @@ function New-InstallLogPaths {
         $paths += (Join-Path $env:TEMP $fileName)
     }
 
+    if (-not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
+        $localLogDir = Join-Path $env:LOCALAPPDATA "ScreenDash\logs"
+        try {
+            New-Item -ItemType Directory -Force $localLogDir | Out-Null
+            $paths += (Join-Path $localLogDir $fileName)
+        } catch {
+            # ignore
+        }
+    }
+
     $programDataLogDir = Join-Path $env:ProgramData "ScreenDash\logs"
     try {
         New-Item -ItemType Directory -Force $programDataLogDir | Out-Null
@@ -42,8 +52,14 @@ function Write-InstallLog {
     }
 }
 
-$serviceName = "ScreenDash.Privileged"
+$serviceName = "RemoteSupport.Service"
 $exePath = Join-Path $InstallDir "PrivilegedService\PrivilegedService.exe"
+
+$isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $isAdmin) {
+    Write-InstallLog "ERROR: Administrator privileges are required to install the Windows service."
+    throw "Administrator privileges are required to install RemoteSupport.Service. Execute the installer as administrator."
+}
 
 Write-InstallLog "Install started. InstallDir: $InstallDir"
 Write-InstallLog "Checking executable path: $exePath"
@@ -64,7 +80,7 @@ try {
     $createOutput = sc.exe create $serviceName binPath= "`"$exePath`"" start= auto obj= LocalSystem 2>&1
     Write-InstallLog "sc.exe create output: $createOutput"
 
-    $descriptionOutput = sc.exe description $serviceName "ScreenDash Privileged Service" 2>&1
+    $descriptionOutput = sc.exe description $serviceName "RemoteSupport.Service" 2>&1
     Write-InstallLog "sc.exe description output: $descriptionOutput"
 
     $startOutput = sc.exe start $serviceName 2>&1

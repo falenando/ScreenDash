@@ -1,3 +1,4 @@
+using RemoteCore;
 using System.IO.Pipes;
 using System.Text;
 using System.Text.Json;
@@ -6,7 +7,6 @@ namespace HostApp;
 
 public sealed class RemoteSupportServiceClient : IDisposable
 {
-    private const string PipeName = "ScreenDash_RemoteSupport_v1";
     private readonly NamedPipeClientStream _pipe;
     private readonly Encoding _encoding = new UTF8Encoding(false);
 
@@ -19,7 +19,7 @@ public sealed class RemoteSupportServiceClient : IDisposable
     {
         try
         {
-            var pipe = new NamedPipeClientStream(".", PipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
+            var pipe = new NamedPipeClientStream(".", RemoteSupportPipe.PipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
             pipe.Connect(timeoutMs);
             return new RemoteSupportServiceClient(pipe);
         }
@@ -31,19 +31,19 @@ public sealed class RemoteSupportServiceClient : IDisposable
 
     public async Task<bool> HealthCheckAsync()
     {
-        var response = await SendRequestAsync(new PipeRequest("HealthCheck", null));
+        var response = await SendRequestAsync(CreateRequest("HealthCheck", null));
         return response?.Status == "OK";
     }
 
-    public Task StartSessionAsync(string? accessCode) => SendRequestAsync(new PipeRequest("StartSession", new { AccessCode = accessCode })).ContinueWith(_ => { });
+    public Task StartSessionAsync(string? accessCode) => SendRequestAsync(CreateRequest("StartSession", new { AccessCode = accessCode })).ContinueWith(_ => { });
 
-    public Task StopSessionAsync() => SendRequestAsync(new PipeRequest("StopSession", null)).ContinueWith(_ => { });
+    public Task StopSessionAsync() => SendRequestAsync(CreateRequest("StopSession", null)).ContinueWith(_ => { });
 
-    public Task SendInputAsync(string raw) => SendRequestAsync(new PipeRequest("SendInput", new { Raw = raw })).ContinueWith(_ => { });
+    public Task SendInputAsync(string raw) => SendRequestAsync(CreateRequest("SendInput", new { Raw = raw })).ContinueWith(_ => { });
 
     public async Task<byte[]?> RequestFrameAsync()
     {
-        var response = await SendRequestAsync(new PipeRequest("RequestFrame", null));
+        var response = await SendRequestAsync(CreateRequest("RequestFrame", null));
         if (response == null || response.Status != "OK" || response.Length is null || response.Length <= 0)
             return null;
 
@@ -64,7 +64,7 @@ public sealed class RemoteSupportServiceClient : IDisposable
         return buffer;
     }
 
-    private async Task<PipeResponse?> SendRequestAsync(PipeRequest request)
+    private async Task<RemoteSupportResponse?> SendRequestAsync(RemoteSupportRequest request)
     {
         var json = JsonSerializer.Serialize(request);
         await WriteLineAsync(json);
@@ -72,7 +72,13 @@ public sealed class RemoteSupportServiceClient : IDisposable
         if (string.IsNullOrWhiteSpace(line))
             return null;
 
-        return JsonSerializer.Deserialize<PipeResponse>(line);
+        return JsonSerializer.Deserialize<RemoteSupportResponse>(line);
+    }
+
+    private static RemoteSupportRequest CreateRequest(string messageType, object? payload)
+    {
+        JsonElement? element = payload == null ? null : JsonSerializer.SerializeToElement(payload);
+        return new RemoteSupportRequest(messageType, element);
     }
 
     private async Task WriteLineAsync(string text)
@@ -106,10 +112,4 @@ public sealed class RemoteSupportServiceClient : IDisposable
         try { _pipe.Dispose(); } catch { }
     }
 
-    private sealed record PipeRequest(string MessageType, object? Payload);
-
-    private sealed record PipeResponse(string Status, string Info)
-    {
-        public int? Length { get; init; }
-    }
 }
