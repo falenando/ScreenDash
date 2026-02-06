@@ -32,7 +32,7 @@ public sealed class PrivilegedWorker : BackgroundService
             while (!stoppingToken.IsCancellationRequested)
             {
                 EnsureAgentRunning();
-                await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
+                await Task.Delay(TimeSpan.FromSeconds(1), stoppingToken);
             }
         }
         catch (OperationCanceledException)
@@ -41,7 +41,17 @@ public sealed class PrivilegedWorker : BackgroundService
         }
         finally
         {
+            StopAgent();
             _logger.LogInformation("Privileged service stopping.");
+        }
+    }
+
+    private void StopAgent()
+    {
+        if (_agentProcess != null)
+        {
+            try { _agentProcess.Kill(); } catch { }
+            _agentProcess = null;
         }
     }
 
@@ -53,16 +63,29 @@ public sealed class PrivilegedWorker : BackgroundService
             return;
         }
 
+        uint activeSessionId = WTSGetActiveConsoleSessionId();
+        if (activeSessionId == 0xFFFFFFFF) return;
+
         if (_agentProcess != null && !_agentProcess.HasExited)
         {
-            if (_agentSessionId != 0 && _agentSessionId == GetCurrentSessionId())
+            // If session changed, restart agent
+            if (_agentSessionId == activeSessionId)
                 return;
 
-            try { _agentProcess.Kill(); } catch { }
-            _agentProcess = null;
+            StopAgent();
         }
 
+        // Try to start as SYSTEM in the active session to support UAC capture
         var args = $"--pipe \"{_pipeName}\"";
+
+        if (_launcher.TryStartAsSystemInSession(activeSessionId, _agentExePath, args, out var systemProcess, out var systemError))
+        {
+            _agentProcess = systemProcess;
+            _agentSessionId = activeSessionId;
+            _logger.LogInformation("Capture agent started as SYSTEM in session {SessionId}.", activeSessionId);
+            return;
+        }
+
         if (_launcher.TryStartInActiveSession(_agentExePath, args, out var process, out var sessionId, out var error))
         {
             _agentProcess = process;
@@ -71,13 +94,10 @@ public sealed class PrivilegedWorker : BackgroundService
             return;
         }
 
-        _logger.LogWarning("Failed to start capture agent: {Error}", error ?? "unknown error");
+
+        _logger.LogWarning("Failed to start capture agent: {SystemError} / {UserError}", systemError ?? "system launch failed", error ?? "user launch failed");
     }
 
-    private static uint GetCurrentSessionId()
-    {
-        return WTSGetActiveConsoleSessionId();
-    }
 
     [DllImport("kernel32.dll")]
     private static extern uint WTSGetActiveConsoleSessionId();
