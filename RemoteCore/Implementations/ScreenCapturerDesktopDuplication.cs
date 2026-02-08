@@ -12,16 +12,28 @@ namespace RemoteCore.Implementations
         {
             IntPtr inputDesktop = IntPtr.Zero;
             IntPtr originalDesktop = IntPtr.Zero;
+            var openedDesktop = IntPtr.Zero;
             var threadId = GetCurrentThreadId();
 
             try
             {
                 originalDesktop = GetThreadDesktop(threadId);
-                inputDesktop = OpenInputDesktop(0, false, DESKTOP_SWITCHDESKTOP | DESKTOP_READOBJECTS | DESKTOP_WRITEOBJECTS);
+                inputDesktop = OpenInputDesktop(0, false, DESKTOP_SWITCHDESKTOP | DESKTOP_READOBJECTS);
+                if (inputDesktop == IntPtr.Zero)
+                {
+                    inputDesktop = OpenDesktop("Winlogon", 0, false, DESKTOP_SWITCHDESKTOP | DESKTOP_READOBJECTS);
+                }
 
                 if (inputDesktop != IntPtr.Zero && inputDesktop != originalDesktop)
                 {
-                    SetThreadDesktop(inputDesktop);
+                    if (SetThreadDesktop(inputDesktop))
+                    {
+                        openedDesktop = inputDesktop;
+                    }
+                    else
+                    {
+                        CloseDesktop(inputDesktop);
+                    }
                 }
 
                 var screenBounds = System.Windows.Forms.Screen.PrimaryScreen.Bounds;
@@ -39,19 +51,21 @@ namespace RemoteCore.Implementations
                     SetThreadDesktop(originalDesktop);
                 }
 
-                if (inputDesktop != IntPtr.Zero && inputDesktop != originalDesktop)
+                if (openedDesktop != IntPtr.Zero)
                 {
-                    CloseDesktop(inputDesktop);
+                    CloseDesktop(openedDesktop);
                 }
             }
         }
 
         private const uint DESKTOP_READOBJECTS = 0x0001;
-        private const uint DESKTOP_WRITEOBJECTS = 0x0080;
         private const uint DESKTOP_SWITCHDESKTOP = 0x0100;
 
         [DllImport("user32.dll", SetLastError = true)]
         private static extern IntPtr OpenInputDesktop(uint dwFlags, bool fInherit, uint dwDesiredAccess);
+
+        [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        private static extern IntPtr OpenDesktop(string lpszDesktop, uint dwFlags, bool fInherit, uint dwDesiredAccess);
 
         [DllImport("user32.dll", SetLastError = true)]
         private static extern bool CloseDesktop(IntPtr hDesktop);

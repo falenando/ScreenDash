@@ -5,8 +5,8 @@
   <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
     <security>
       <requestedPrivileges>
-        <!-- uiAccess requires the binary to be signed and located in a trusted path (e.g., Program Files). -->
-        <requestedExecutionLevel level="asInvoker" uiAccess="true" />
+        <!-- Para uiAccess=true, o binário precisa ser assinado e estar em caminho confiável. -->
+        <requestedExecutionLevel level="asInvoker" uiAccess="false" />
       </requestedPrivileges>
     </security>
   </trustInfo>
