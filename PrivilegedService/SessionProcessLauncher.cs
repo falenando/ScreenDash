@@ -6,6 +6,13 @@ namespace PrivilegedService;
 
 internal sealed class SessionProcessLauncher
 {
+    private static readonly string[] RequiredPrivileges =
+    [
+        "SeAssignPrimaryTokenPrivilege",
+        "SeIncreaseQuotaPrivilege",
+        "SeImpersonatePrivilege"
+    ];
+
     public bool TryStartAsSystemInSession(uint sessionId, string exePath, string arguments, out Process? process, out string? error)
     {
         process = null;
@@ -24,6 +31,9 @@ internal sealed class SessionProcessLauncher
                 return false;
             }
 
+            if (!EnableRequiredPrivileges(processToken, out error))
+                return false;
+
             if (!DuplicateTokenEx(processToken, TOKEN_ALL_ACCESS, IntPtr.Zero, SECURITY_IMPERSONATION_LEVEL.SecurityImpersonation, TOKEN_TYPE.TokenPrimary, out primaryToken))
             {
                 error = new Win32Exception(Marshal.GetLastWin32Error()).Message;
@@ -36,12 +46,8 @@ internal sealed class SessionProcessLauncher
                 return false;
             }
 
-            // Enable SeAssignPrimaryTokenPrivilege on the token
-            if (!EnablePrivilege(primaryToken, "SeAssignPrimaryTokenPrivilege"))
-            {
-                error = "Failed to enable SeAssignPrimaryTokenPrivilege";
+            if (!EnableRequiredPrivileges(primaryToken, out error))
                 return false;
-            }
 
             CreateEnvironmentBlock(out env, primaryToken, false);
 
@@ -94,22 +100,25 @@ internal sealed class SessionProcessLauncher
             return false;
         }
 
+        var processToken = IntPtr.Zero;
         var primaryToken = IntPtr.Zero;
         var env = IntPtr.Zero;
         var processInfo = new PROCESS_INFORMATION();
 
         try
         {
-            if (!DuplicateTokenEx(userToken, TOKEN_ASSIGN_PRIMARY | TOKEN_DUPLICATE | TOKEN_QUERY | TOKEN_ADJUST_DEFAULT | TOKEN_ADJUST_SESSIONID, IntPtr.Zero, SECURITY_IMPERSONATION_LEVEL.SecurityImpersonation, TOKEN_TYPE.TokenPrimary, out primaryToken))
+            if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, out processToken))
             {
                 error = new Win32Exception(Marshal.GetLastWin32Error()).Message;
                 return false;
             }
 
-            // Enable SeAssignPrimaryTokenPrivilege on the token
-            if (!EnablePrivilege(primaryToken, "SeAssignPrimaryTokenPrivilege"))
+            if (!EnableRequiredPrivileges(processToken, out error))
+                return false;
+
+            if (!DuplicateTokenEx(userToken, TOKEN_ASSIGN_PRIMARY | TOKEN_DUPLICATE | TOKEN_QUERY | TOKEN_ADJUST_DEFAULT | TOKEN_ADJUST_SESSIONID, IntPtr.Zero, SECURITY_IMPERSONATION_LEVEL.SecurityImpersonation, TOKEN_TYPE.TokenPrimary, out primaryToken))
             {
-                error = "Failed to enable SeAssignPrimaryTokenPrivilege";
+                error = new Win32Exception(Marshal.GetLastWin32Error()).Message;
                 return false;
             }
 
@@ -142,6 +151,8 @@ internal sealed class SessionProcessLauncher
                 DestroyEnvironmentBlock(env);
             if (primaryToken != IntPtr.Zero)
                 CloseHandle(primaryToken);
+            if (processToken != IntPtr.Zero)
+                CloseHandle(processToken);
             if (userToken != IntPtr.Zero)
                 CloseHandle(userToken);
         }
@@ -186,12 +197,14 @@ internal sealed class SessionProcessLauncher
     private const uint TOKEN_ASSIGN_PRIMARY = 0x0001;
     private const uint TOKEN_DUPLICATE = 0x0002;
     private const uint TOKEN_QUERY = 0x0008;
+    private const uint TOKEN_ADJUST_PRIVILEGES = 0x0020;
     private const uint TOKEN_ADJUST_DEFAULT = 0x0080;
     private const uint TOKEN_ADJUST_SESSIONID = 0x0100;
     private const uint TOKEN_ALL_ACCESS = 0x000F01FF;
     private const uint CREATE_UNICODE_ENVIRONMENT = 0x00000400;
     private const uint CREATE_NEW_CONSOLE = 0x00000010;
     private const uint SE_PRIVILEGE_ENABLED = 0x00000002;
+    private const int ERROR_NOT_ALL_ASSIGNED = 1300;
 
     private enum TOKEN_TYPE
     {
@@ -278,23 +291,54 @@ internal sealed class SessionProcessLauncher
     private struct TOKEN_PRIVILEGES
     {
         public uint PrivilegeCount;
-        public LUID_AND_ATTRIBUTES[] Privileges;
+        public LUID_AND_ATTRIBUTES Privileges;
     }
 
-    private static bool EnablePrivilege(IntPtr token, string privilege)
+    private static bool EnableRequiredPrivileges(IntPtr token, out string? error)
+    {
+        foreach (var privilege in RequiredPrivileges)
+        {
+            if (!EnablePrivilege(token, privilege, out error))
+                return false;
+        }
+
+        error = null;
+        return true;
+    }
+
+    private static bool EnablePrivilege(IntPtr token, string privilege, out string? error)
     {
         var luid = new LUID();
         if (!LookupPrivilegeValue(null, privilege, ref luid))
+        {
+            error = new Win32Exception(Marshal.GetLastWin32Error()).Message;
             return false;
+        }
 
         var tp = new TOKEN_PRIVILEGES
         {
             PrivilegeCount = 1,
-            Privileges = new LUID_AND_ATTRIBUTES[1]
+            Privileges = new LUID_AND_ATTRIBUTES
+            {
+                Luid = luid,
+                Attributes = SE_PRIVILEGE_ENABLED
+            }
         };
-        tp.Privileges[0].Luid = luid;
-        tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
 
-        return AdjustTokenPrivileges(token, false, ref tp, 0, IntPtr.Zero, IntPtr.Zero);
+        if (!AdjustTokenPrivileges(token, false, ref tp, 0, IntPtr.Zero, IntPtr.Zero))
+        {
+            error = new Win32Exception(Marshal.GetLastWin32Error()).Message;
+            return false;
+        }
+
+        var lastError = Marshal.GetLastWin32Error();
+        if (lastError == ERROR_NOT_ALL_ASSIGNED)
+        {
+            error = $"Privilege not held: {privilege}";
+            return false;
+        }
+
+        error = null;
+        return true;
     }
 }

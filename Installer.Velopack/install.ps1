@@ -1,5 +1,6 @@
 param(
-    [string]$InstallDir
+    [string]$InstallDir,
+    [switch]$Elevated
 )
 
 $ErrorActionPreference = "Stop"
@@ -52,13 +53,22 @@ function Write-InstallLog {
     }
 }
 
-$serviceName = "RemoteSupport.Service"
+$serviceName = "ScreenDash.Privileged"
 $exePath = Join-Path $InstallDir "PrivilegedService\PrivilegedService.exe"
 
 $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $isAdmin) {
+    if (-not $Elevated) {
+        Write-InstallLog "Elevation required. Relaunching install hook as administrator."
+        $escapedInstallDir = $InstallDir.Replace('"', '""')
+        $arguments = "-ExecutionPolicy Bypass -File `"$PSCommandPath`" -InstallDir `"$escapedInstallDir`" -Elevated"
+        $elevatedProcess = Start-Process -FilePath "powershell" -Verb RunAs -ArgumentList $arguments -Wait -PassThru
+        Write-InstallLog "Elevated install hook finished with exit code $($elevatedProcess.ExitCode)."
+        return
+    }
+
     Write-InstallLog "ERROR: Administrator privileges are required to install the Windows service."
-    throw "Administrator privileges are required to install RemoteSupport.Service. Execute the installer as administrator."
+    throw "Administrator privileges are required to install ScreenDash.Privileged. Execute the installer as administrator."
 }
 
 Write-InstallLog "Install started. InstallDir: $InstallDir"
@@ -80,7 +90,7 @@ try {
     $createOutput = sc.exe create $serviceName binPath= "`"$exePath`"" start= auto obj= LocalSystem 2>&1
     Write-InstallLog "sc.exe create output: $createOutput"
 
-    $descriptionOutput = sc.exe description $serviceName "RemoteSupport.Service" 2>&1
+    $descriptionOutput = sc.exe description $serviceName "ScreenDash Privileged Service" 2>&1
     Write-InstallLog "sc.exe description output: $descriptionOutput"
 
     $startOutput = sc.exe start $serviceName 2>&1

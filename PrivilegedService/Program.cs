@@ -8,7 +8,7 @@ var builder = Host.CreateApplicationBuilder(args);
 
 builder.Services.AddWindowsService(options =>
 {
-    options.ServiceName = "RemoteSupport.Service";
+    options.ServiceName = "ScreenDash.Privileged";
 });
 
 builder.Logging.AddEventLog();
