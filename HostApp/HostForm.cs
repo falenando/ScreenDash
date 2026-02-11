@@ -26,10 +26,67 @@ namespace HostApp
         private Socket? _currentSocket;
         private ushort _sessionToken;
         private readonly AccessCodeService _codeService = new AccessCodeService();
+        private RemoteSupportServiceClient? _serviceClient;
+        private bool _useService = false;
+        private bool _serviceLoggedMissing = false;
 
         public HostForm()
             : this(new RemoteCore.Implementations.ScreenCapturerDesktopDuplication(), new RemoteCore.Implementations.JpegFrameEncoder(50, 1024), new RemoteCore.ConnectionLogger("host.log"))
         {
+        }
+
+        private void TryEnableService()
+        {
+            _useService = false;
+            _serviceClient?.Dispose();
+            // Try multiple times with longer timeout to avoid missing the pipe when the agent is initializing.
+            const int connectTimeoutMs = 5000;
+            const int maxAttempts = 3;
+            for (var attempt = 1; attempt <= maxAttempts && _serviceClient == null; attempt++)
+            {
+                _serviceClient = RemoteSupportServiceClient.TryConnect(connectTimeoutMs);
+                if (_serviceClient != null)
+                    break;
+                Thread.Sleep(200);
+            }
+            if (_serviceClient == null)
+            {
+                if (!_serviceLoggedMissing)
+                {
+                    var reason = RemoteSupportServiceClient.LastConnectError;
+                    var message = string.IsNullOrWhiteSpace(reason)
+                        ? "RemoteSupport.Service not detected (named pipe unavailable). Running without privileged input."
+                        : $"RemoteSupport.Service not detected (named pipe unavailable). Running without privileged input. Reason: {reason}";
+                    AppendLog(message);
+                    _serviceLoggedMissing = true;
+                }
+                return;
+            }
+
+            try
+            {
+                var ok = _serviceClient.HealthCheckAsync().GetAwaiter().GetResult();
+                if (ok)
+                {
+                    _useService = true;
+                    AppendLog("RemoteSupport.Service detected. Using service for capture/input.");
+                    _serviceLoggedMissing = false;
+                }
+                else
+                {
+                    AppendLog("RemoteSupport.Service health check failed. Running without privileged input.");
+                    _useService = false;
+                    _serviceClient.Dispose();
+                    _serviceClient = null;
+                }
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"RemoteSupport.Service health check error. Running without privileged input. Reason: {ex.Message}");
+                _useService = false;
+                _serviceClient?.Dispose();
+                _serviceClient = null;
+            }
         }
 
         // DI constructor
@@ -45,21 +102,13 @@ namespace HostApp
             btnQuit.Click += btnQuit_Click;
             btnCopyCode.Click += btnCopyCode_Click;
 
-            // generate session token and access code, logging each step to UI and file
+            // generate session token and start listening; access code is set based on local/relay decision
             try
             {
-                AppendLog(ScreenDash.Resources.Strings.HostLog_DetectingLocalIPv4);
                 _sessionToken = GenerateSessionToken();
-                var ip = NetworkHelper.GetLocalIPv4();
-
-                AppendLog(ScreenDash.Resources.Strings.HostLog_GeneratingAccessCode);
-                var code = _codeService.GenerateCode(ip, _sessionToken);
-                txtTokenRemoto.Text = code;
-                AppendLog(string.Format(ScreenDash.Resources.Strings.HostLog_AccessCode, code));
-
                 AppendLog(string.Format(ScreenDash.Resources.Strings.HostLog_StartingListenerOnPort, Port));
-                // start listening automatically
-                StartListening();
+                // start listening after the form is shown to avoid blocking UI during startup
+                this.Shown += HostForm_Shown;
                 btnStart.Text = ScreenDash.Resources.Strings.HostForm_StopSharing;
                 // ensure we stop listener when form closes
                 this.FormClosing += HostForm_FormClosing;
@@ -68,6 +117,16 @@ namespace HostApp
             {
                 AppendLog(string.Format(ScreenDash.Resources.Strings.HostLog_InitializationError, ex.Message));
             }
+
+        }
+
+        private async void HostForm_Shown(object? sender, EventArgs e)
+        {
+            // Don't run the full StartListening on a background thread because it uses UI Invoke.
+            // Instead, warm up the privileged service connection in background and then
+            // continue startup on the UI thread.
+            await Task.Run(() => TryEnableService());
+            StartListening();
         }
 
         private void UpdateStatus(string text, System.Drawing.Color color)
@@ -94,11 +153,44 @@ namespace HostApp
             }
         }
 
-        private void StartListening()
+        private void StartListening(bool isManualStart = false)
         {
-            if (!CanStartListenerWithoutPrompt(Port, out var reason))
+            if (Port <= 0 || Port > 65535)
             {
+                var reason = $"Invalid port: {Port}.";
                 AppendLog(string.Format(ScreenDash.Resources.Strings.HostLog_ListenerNotStarted, reason));
+                UpdateStatus(ScreenDash.Resources.Strings.HostForm_StatusNotReady, System.Drawing.Color.Red);
+                _isListening = false;
+                return;
+            }
+
+            // TryEnableService is warmed up in the Shown handler to avoid blocking UI startup.
+
+            if (!IsTcpPortFree(Port))
+            {
+                AppendLog($"Port {Port} is already in use. Trying relay server...");
+                StartRelayConnection(isManualStart);
+                return;
+            }
+
+            if (!IsFirewallInboundAllowedForThisAppOrPort(Port))
+            {
+                var reason = $"Windows Firewall inbound rule not found/enabled for TCP port {Port} (or this app).";
+                AppendLog(string.Format(ScreenDash.Resources.Strings.HostLog_ListenerNotStarted, reason));
+                AppendLog("Inbound firewall rule is missing; trying relay server...");
+                StartRelayConnection(isManualStart);
+                return;
+            }
+
+            try
+            {
+                AppendLog(ScreenDash.Resources.Strings.HostLog_DetectingLocalIPv4);
+                var ip = NetworkHelper.GetLocalIPv4();
+                SetAccessCode(ip, isManualStart);
+            }
+            catch (Exception ex)
+            {
+                AppendLog(string.Format(ScreenDash.Resources.Strings.HostLog_InitializationError, ex.Message));
                 UpdateStatus(ScreenDash.Resources.Strings.HostForm_StatusNotReady, System.Drawing.Color.Red);
                 _isListening = false;
                 return;
@@ -109,7 +201,7 @@ namespace HostApp
             try
             {
                 _listenerImpl = new TcpNetworkListener(Port);
-                _listenerImpl.ConnectionAccepted += socket => _ = Task.Run(() => HandleIncomingSocket(socket));
+                _listenerImpl.ConnectionAccepted += socket => _ = Task.Run(() => HandleIncomingSocket(socket, skipNetworkCheck: false));
                 _listenTask = _listenerImpl.StartAsync(_cts.Token);
                 _isListening = true;
                 AppendLog(string.Format(ScreenDash.Resources.Strings.HostLog_ListeningOnPort, Port));
@@ -120,6 +212,89 @@ namespace HostApp
                 AppendLog(string.Format(ScreenDash.Resources.Strings.HostLog_FailedToStartListener, ex.Message));
                 _isListening = false;
             }
+        }
+
+        private void StartRelayConnection(bool isManualStart)
+        {
+            var relayServer = RemoteCore.Config.GetStringFromFile("hostconfig.json", "RelayServer", string.Empty);
+            if (string.IsNullOrWhiteSpace(relayServer))
+            {
+                AppendLog("Relay server address is not configured in hostconfig.json.");
+                UpdateStatus(ScreenDash.Resources.Strings.HostForm_StatusNotReady, System.Drawing.Color.Red);
+                _isListening = false;
+                return;
+            }
+
+            TryEnableService();
+
+            _cts = new System.Threading.CancellationTokenSource();
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    var relayIp = await ResolveRelayAddressAsync(relayServer, _cts.Token);
+                    AppendLog($"Resolved relay server to {relayIp} for access code.");
+                    SetAccessCode(relayIp, isManualStart);
+                }
+                catch (Exception ex)
+                {
+                    AppendLog("Relay server address could not be resolved for access code: " + ex.Message);
+                }
+            });
+            _listenTask = Task.Run(() => ConnectToRelayAsync(relayServer, Port, _cts.Token));
+            UpdateStatus(ScreenDash.Resources.Strings.HostForm_StatusWaitingForConnection, System.Drawing.Color.Orange);
+        }
+
+        private async Task ConnectToRelayAsync(string relayServer, int port, System.Threading.CancellationToken token)
+        {
+            try
+            {
+                var relayIp = await ResolveRelayAddressAsync(relayServer, token);
+                using var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+                var connectTask = socket.ConnectAsync(relayIp, port);
+                var timeoutTask = Task.Delay(5000, token);
+                var completed = await Task.WhenAny(connectTask, timeoutTask);
+                if (completed == timeoutTask)
+                {
+                    AppendLog($"Relay connection timeout to {relayServer}:{port}.");
+                    UpdateStatus(ScreenDash.Resources.Strings.HostForm_StatusNotReady, System.Drawing.Color.Red);
+                    _isListening = false;
+                    return;
+                }
+
+                await connectTask;
+                if (token.IsCancellationRequested)
+                    return;
+
+                _isListening = true;
+                AppendLog($"Connected to relay server {relayServer}:{port}.");
+
+                var handshake = Encoding.ASCII.GetBytes("HOST\n");
+                await socket.SendAsync(handshake, SocketFlags.None);
+
+                await HandleIncomingSocket(socket, skipNetworkCheck: true);
+            }
+            catch (Exception ex)
+            {
+                AppendLog("Relay connection failed: " + ex.Message);
+                UpdateStatus(ScreenDash.Resources.Strings.HostForm_StatusNotReady, System.Drawing.Color.Red);
+                _isListening = false;
+            }
+        }
+
+        private static async Task<IPAddress> ResolveRelayAddressAsync(string relayServer, System.Threading.CancellationToken token)
+        {
+            if (IPAddress.TryParse(relayServer, out var ip))
+                return ip;
+
+            var addresses = await Dns.GetHostAddressesAsync(relayServer, token);
+            foreach (var addr in addresses)
+            {
+                if (addr.AddressFamily == AddressFamily.InterNetwork)
+                    return addr;
+            }
+
+            throw new InvalidOperationException("Relay server address could not be resolved.");
         }
 
         private bool CanStartListenerWithoutPrompt(int port, out string reason)
@@ -305,7 +480,7 @@ namespace HostApp
 
             return false;
         }
-        private async Task HandleIncomingSocket(Socket socket)
+        private async Task HandleIncomingSocket(Socket socket, bool skipNetworkCheck)
         {
             _currentSocket = socket;
 
@@ -318,31 +493,34 @@ namespace HostApp
             }
 
             // accept only connections from same /24 network as local
-            try
+            if (!skipNetworkCheck)
             {
-                var remoteEp = socket.RemoteEndPoint as IPEndPoint;
-                if (remoteEp != null)
+                try
                 {
-                    var localIp = NetworkHelper.GetLocalIPv4();
-                    var localBytes = localIp.GetAddressBytes();
-                    var remoteBytes = remoteEp.Address.GetAddressBytes();
-                    if (localBytes.Length == 4 && remoteBytes.Length == 4)
+                    var remoteEp = socket.RemoteEndPoint as IPEndPoint;
+                    if (remoteEp != null)
                     {
-                        // compare first 3 octets (same /24)
-                        if (!(localBytes[0] == remoteBytes[0] && localBytes[1] == remoteBytes[1] && localBytes[2] == remoteBytes[2]))
+                        var localIp = NetworkHelper.GetLocalIPv4();
+                        var localBytes = localIp.GetAddressBytes();
+                        var remoteBytes = remoteEp.Address.GetAddressBytes();
+                        if (localBytes.Length == 4 && remoteBytes.Length == 4)
                         {
-                            AppendLog(string.Format(ScreenDash.Resources.Strings.HostLog_RejectedDifferentNetwork, remoteEp.Address));
-                            try { socket.Close(); } catch { }
-                            return;
+                            // compare first 3 octets (same /24)
+                            if (!(localBytes[0] == remoteBytes[0] && localBytes[1] == remoteBytes[1] && localBytes[2] == remoteBytes[2]))
+                            {
+                                AppendLog(string.Format(ScreenDash.Resources.Strings.HostLog_RejectedDifferentNetwork, remoteEp.Address));
+                                try { socket.Close(); } catch { }
+                                return;
+                            }
                         }
                     }
                 }
-            }
-            catch (Exception ex)
-            {
-                AppendLog(string.Format(ScreenDash.Resources.Strings.HostLog_ErrorCheckingRemoteEndpoint, ex.Message));
-                try { socket.Close(); } catch { }
-                return;
+                catch (Exception ex)
+                {
+                    AppendLog(string.Format(ScreenDash.Resources.Strings.HostLog_ErrorCheckingRemoteEndpoint, ex.Message));
+                    try { socket.Close(); } catch { }
+                    return;
+                }
             }
 
             AppendLog(string.Format(ScreenDash.Resources.Strings.HostLog_AcceptedConnectionFrom, socket.RemoteEndPoint));
@@ -350,13 +528,65 @@ namespace HostApp
             UpdateStatus(string.Format(ScreenDash.Resources.Strings.HostForm_StatusConnected, socket.RemoteEndPoint), System.Drawing.Color.LimeGreen);
             UpdateRemoteControlIndicator();
 
+            if (!_useService || _serviceClient == null)
+                TryEnableService();
+
             try
             {
                 var streamToken = _cts?.Token ?? System.Threading.CancellationToken.None;
-                var inputTask = Task.Run(() => ReceiveInputLoopAsync(socket, streamToken), streamToken);
-                var streamer = new RemoteCore.Implementations.FrameStreamer(_capturer, _encoder, _logger);
-                await streamer.StreamToAsync(socket, streamToken);
-                await inputTask;
+
+                if (skipNetworkCheck)
+                {
+                    // Relay path: start streaming immediately (handshake already forwarded via relay initial payload)
+                    AppendLog("Relay connection: starting stream without local handshake wait.");
+                    var inputTask = Task.Run(() => ReceiveInputLoopAsync(socket, streamToken, null), streamToken);
+
+                    if (_useService && _serviceClient != null)
+                    {
+                        await _serviceClient.StartSessionAsync(txtTokenRemoto.Text);
+                        await StreamFromServiceAsync(socket, streamToken);
+                    }
+                    else
+                    {
+                        var streamer = new RemoteCore.Implementations.FrameStreamer(_capturer, _encoder, _logger);
+                        await streamer.StreamToAsync(socket, streamToken, skipHandshake: true);
+                    }
+
+                    await inputTask;
+                }
+                else
+                {
+                    var handshakeTcs = new TaskCompletionSource<bool>();
+
+                    // Start input loop which will handle the handshake first
+                    var inputTask = Task.Run(() => ReceiveInputLoopAsync(socket, streamToken, handshakeTcs), streamToken);
+
+                    // Wait for the REQUEST_STREAM handshake signal from input loop
+                    var handshakeTimeout = Task.Delay(10000, streamToken);
+                    var completedTask = await Task.WhenAny(handshakeTcs.Task, handshakeTimeout);
+
+                    if (completedTask == handshakeTcs.Task && handshakeTcs.Task.Result)
+                    {
+                        AppendLog("Stream requested by remote peer.");
+                        if (_useService && _serviceClient != null)
+                        {
+                            await _serviceClient.StartSessionAsync(txtTokenRemoto.Text);
+                            await StreamFromServiceAsync(socket, streamToken);
+                        }
+                        else
+                        {
+                            var streamer = new RemoteCore.Implementations.FrameStreamer(_capturer, _encoder, _logger);
+                            await streamer.StreamToAsync(socket, streamToken, skipHandshake: true);
+                        }
+                    }
+                    else
+                    {
+                        AppendLog("Handshake timeout or failed. Closing connection.");
+                        try { socket.Close(); } catch { }
+                    }
+
+                    await inputTask;
+                }
             }
             catch (Exception ex)
             {
@@ -364,11 +594,35 @@ namespace HostApp
             }
             finally
             {
+                if (_useService && _serviceClient != null)
+                {
+                    try { await _serviceClient.StopSessionAsync(); } catch { }
+                }
                 _connectionActive = false;
                 try { _currentSocket?.Close(); } catch { }
                 _currentSocket = null;
                 UpdateStatus(ScreenDash.Resources.Strings.HostForm_StatusWaitingForConnection, System.Drawing.Color.Orange);
                 UpdateRemoteControlIndicator();
+            }
+        }
+
+        private async Task StreamFromServiceAsync(Socket socket, System.Threading.CancellationToken token)
+        {
+            while (socket.Connected && !token.IsCancellationRequested)
+            {
+                var frame = await _serviceClient!.RequestFrameAsync();
+                if (frame == null || frame.Length == 0)
+                    break;
+
+                var header = Encoding.ASCII.GetBytes(frame.Length.ToString("D8"));
+                await socket.SendAsync(header, SocketFlags.None);
+                var sent = 0;
+                while (sent < frame.Length)
+                {
+                    sent += await socket.SendAsync(new ArraySegment<byte>(frame, sent, frame.Length - sent), SocketFlags.None);
+                }
+
+                await Task.Delay(200, token).ContinueWith(_ => { });
             }
         }
 
@@ -438,6 +692,26 @@ namespace HostApp
             return (ushort)((bytes[0] << 8) | bytes[1]);
         }
 
+        private void SetAccessCode(IPAddress ip, bool isManualStart)
+        {
+            AppendLog(ScreenDash.Resources.Strings.HostLog_GeneratingAccessCode);
+            var code = _codeService.GenerateCode(ip, _sessionToken);
+            var logFormat = isManualStart
+                ? ScreenDash.Resources.Strings.HostLog_GeneratedNewAccessCode
+                : ScreenDash.Resources.Strings.HostLog_AccessCode;
+
+            if (txtTokenRemoto.InvokeRequired)
+            {
+                txtTokenRemoto.Invoke(() => txtTokenRemoto.Text = code);
+            }
+            else
+            {
+                txtTokenRemoto.Text = code;
+            }
+
+            AppendLog(string.Format(logFormat, code));
+        }
+
         private async void btnStart_Click(object sender, EventArgs e)
         {
             // start listening manually if user clicks Start
@@ -486,14 +760,9 @@ namespace HostApp
                 }
                 else
                 {
-                    // generate new session token and code
+                    // generate new session token and start listening
                     _sessionToken = GenerateSessionToken();
-                    var ip = NetworkHelper.GetLocalIPv4();
-                    var code = _codeService.GenerateCode(ip, _sessionToken);
-                    txtTokenRemoto.Text = code;
-                    AppendLog(string.Format(ScreenDash.Resources.Strings.HostLog_GeneratedNewAccessCode, code));
-
-                    StartListening();
+                    StartListening(isManualStart: true);
                     btnStart.Text = ScreenDash.Resources.Strings.HostForm_StopSharing;
                 }
             }
@@ -572,7 +841,7 @@ namespace HostApp
             lblRemoteControlStatus.ForeColor = color;
         }
 
-        private async Task ReceiveInputLoopAsync(Socket socket, System.Threading.CancellationToken token)
+        private async Task ReceiveInputLoopAsync(Socket socket, System.Threading.CancellationToken token, TaskCompletionSource<bool>? handshakeTcs)
         {
             var buffer = new byte[4096];
             var sb = new StringBuilder();
@@ -596,13 +865,47 @@ namespace HostApp
                         var line = text.Substring(0, newlineIndex).Trim();
                         sb.Remove(0, newlineIndex + 1);
                         if (!string.IsNullOrEmpty(line))
-                            HandleInputCommand(line);
+                        {
+                            if (handshakeTcs != null && line.Equals("REQUEST_STREAM", StringComparison.OrdinalIgnoreCase))
+                            {
+                                handshakeTcs.TrySetResult(true);
+                                continue;
+                            }
+
+                            if (_useService && _serviceClient != null)
+                            {
+                                if (IsRemoteInputAllowed() && line.StartsWith("INPUT|", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    try
+                                    {
+                                        await _serviceClient.SendInputAsync(line);
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        AppendLog($"Service input failed; falling back to local input. Reason: {ex.Message}");
+                                        _useService = false;
+                                        try { _serviceClient.Dispose(); } catch { }
+                                        _serviceClient = null;
+                                        HandleInputCommand(line);
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                HandleInputCommand(line);
+                            }
+                        }
                     }
                 }
             }
             catch
             {
+                handshakeTcs?.TrySetResult(false);
                 // ignore input loop errors
+            }
+            finally
+            {
+                handshakeTcs?.TrySetResult(false);
             }
         }
 

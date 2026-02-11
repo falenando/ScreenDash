@@ -59,5 +59,31 @@ namespace RemoteCore
 
             return defaultLanguage;
         }
+
+        public static string GetStringFromFile(string fileName, string propertyName, string defaultValue)
+        {
+            try
+            {
+                var baseDir = AppDomain.CurrentDomain.BaseDirectory;
+                var path = Path.Combine(baseDir, fileName);
+                if (!File.Exists(path))
+                    return defaultValue;
+
+                using var fs = File.OpenRead(path);
+                using var doc = JsonDocument.Parse(fs);
+                if (doc.RootElement.TryGetProperty(propertyName, out var el))
+                {
+                    var value = el.GetString();
+                    if (!string.IsNullOrWhiteSpace(value))
+                        return value;
+                }
+            }
+            catch
+            {
+                // ignore and use default
+            }
+
+            return defaultValue;
+        }
     }
 }

@@ -159,8 +159,8 @@ namespace ViewerApp
             AppendLog("Connected to " + ip);
             using var peer = new TcpPeer(_socket, _logger);
 
-            // request stream
-            await peer.SendAsync("REQUEST_STREAM");
+            // request stream (line-based to avoid TCP segmentation issues)
+            await peer.SendAsync("REQUEST_STREAM\n");
             AppendLog("Sent REQUEST_STREAM");
 
             // start receiving frames
