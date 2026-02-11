@@ -10,6 +10,8 @@ public sealed class RemoteSupportServiceClient : IDisposable
     private readonly NamedPipeClientStream _pipe;
     private readonly Encoding _encoding = new UTF8Encoding(false);
 
+    public static string? LastConnectError { get; private set; }
+
     private RemoteSupportServiceClient(NamedPipeClientStream pipe)
     {
         _pipe = pipe;
@@ -21,10 +23,12 @@ public sealed class RemoteSupportServiceClient : IDisposable
         {
             var pipe = new NamedPipeClientStream(".", RemoteSupportPipe.PipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
             pipe.Connect(timeoutMs);
+            LastConnectError = null;
             return new RemoteSupportServiceClient(pipe);
         }
-        catch
+        catch (Exception ex)
         {
+            LastConnectError = ex.Message;
             return null;
         }
     }

@@ -28,6 +28,7 @@ namespace HostApp
         private readonly AccessCodeService _codeService = new AccessCodeService();
         private RemoteSupportServiceClient? _serviceClient;
         private bool _useService = false;
+        private bool _serviceLoggedMissing = false;
 
         public HostForm()
             : this(new RemoteCore.Implementations.ScreenCapturerDesktopDuplication(), new RemoteCore.Implementations.JpegFrameEncoder(50, 1024), new RemoteCore.ConnectionLogger("host.log"))
@@ -38,9 +39,29 @@ namespace HostApp
         {
             _useService = false;
             _serviceClient?.Dispose();
-            _serviceClient = RemoteSupportServiceClient.TryConnect(500);
+            // Try multiple times with longer timeout to avoid missing the pipe when the agent is initializing.
+            const int connectTimeoutMs = 5000;
+            const int maxAttempts = 3;
+            for (var attempt = 1; attempt <= maxAttempts && _serviceClient == null; attempt++)
+            {
+                _serviceClient = RemoteSupportServiceClient.TryConnect(connectTimeoutMs);
+                if (_serviceClient != null)
+                    break;
+                Thread.Sleep(200);
+            }
             if (_serviceClient == null)
+            {
+                if (!_serviceLoggedMissing)
+                {
+                    var reason = RemoteSupportServiceClient.LastConnectError;
+                    var message = string.IsNullOrWhiteSpace(reason)
+                        ? "RemoteSupport.Service not detected (named pipe unavailable). Running without privileged input."
+                        : $"RemoteSupport.Service not detected (named pipe unavailable). Running without privileged input. Reason: {reason}";
+                    AppendLog(message);
+                    _serviceLoggedMissing = true;
+                }
                 return;
+            }
 
             try
             {
@@ -49,15 +70,20 @@ namespace HostApp
                 {
                     _useService = true;
                     AppendLog("RemoteSupport.Service detected. Using service for capture/input.");
+                    _serviceLoggedMissing = false;
                 }
                 else
                 {
+                    AppendLog("RemoteSupport.Service health check failed. Running without privileged input.");
+                    _useService = false;
                     _serviceClient.Dispose();
                     _serviceClient = null;
                 }
             }
-            catch
+            catch (Exception ex)
             {
+                AppendLog($"RemoteSupport.Service health check error. Running without privileged input. Reason: {ex.Message}");
+                _useService = false;
                 _serviceClient?.Dispose();
                 _serviceClient = null;
             }
@@ -81,8 +107,8 @@ namespace HostApp
             {
                 _sessionToken = GenerateSessionToken();
                 AppendLog(string.Format(ScreenDash.Resources.Strings.HostLog_StartingListenerOnPort, Port));
-                // start listening automatically
-                StartListening();
+                // start listening after the form is shown to avoid blocking UI during startup
+                this.Shown += HostForm_Shown;
                 btnStart.Text = ScreenDash.Resources.Strings.HostForm_StopSharing;
                 // ensure we stop listener when form closes
                 this.FormClosing += HostForm_FormClosing;
@@ -91,6 +117,16 @@ namespace HostApp
             {
                 AppendLog(string.Format(ScreenDash.Resources.Strings.HostLog_InitializationError, ex.Message));
             }
+
+        }
+
+        private async void HostForm_Shown(object? sender, EventArgs e)
+        {
+            // Don't run the full StartListening on a background thread because it uses UI Invoke.
+            // Instead, warm up the privileged service connection in background and then
+            // continue startup on the UI thread.
+            await Task.Run(() => TryEnableService());
+            StartListening();
         }
 
         private void UpdateStatus(string text, System.Drawing.Color color)
@@ -128,7 +164,7 @@ namespace HostApp
                 return;
             }
 
-            TryEnableService();
+            // TryEnableService is warmed up in the Shown handler to avoid blocking UI startup.
 
             if (!IsTcpPortFree(Port))
             {
@@ -492,6 +528,9 @@ namespace HostApp
             UpdateStatus(string.Format(ScreenDash.Resources.Strings.HostForm_StatusConnected, socket.RemoteEndPoint), System.Drawing.Color.LimeGreen);
             UpdateRemoteControlIndicator();
 
+            if (!_useService || _serviceClient == null)
+                TryEnableService();
+
             try
             {
                 var streamToken = _cts?.Token ?? System.Threading.CancellationToken.None;
@@ -836,7 +875,20 @@ namespace HostApp
                             if (_useService && _serviceClient != null)
                             {
                                 if (IsRemoteInputAllowed() && line.StartsWith("INPUT|", StringComparison.OrdinalIgnoreCase))
-                                    await _serviceClient.SendInputAsync(line);
+                                {
+                                    try
+                                    {
+                                        await _serviceClient.SendInputAsync(line);
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        AppendLog($"Service input failed; falling back to local input. Reason: {ex.Message}");
+                                        _useService = false;
+                                        try { _serviceClient.Dispose(); } catch { }
+                                        _serviceClient = null;
+                                        HandleInputCommand(line);
+                                    }
+                                }
                             }
                             else
                             {

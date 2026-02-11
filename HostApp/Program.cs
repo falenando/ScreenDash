@@ -10,6 +10,16 @@ namespace HostApp
         [STAThread]
         static void Main()
         {
+            var startupLogger = new ConnectionLogger("host-startup.log");
+            AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+            {
+                try { startupLogger.Log("UnhandledException: " + e.ExceptionObject); } catch { }
+            };
+            Application.ThreadException += (_, e) =>
+            {
+                try { startupLogger.Log("ThreadException: " + e.Exception); } catch { }
+            };
+
             VelopackApp.Build().Run();
 
             Application.EnableVisualStyles();

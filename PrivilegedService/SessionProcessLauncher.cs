@@ -122,6 +122,9 @@ internal sealed class SessionProcessLauncher
                 return false;
             }
 
+            if (!EnableRequiredPrivileges(primaryToken, out error))
+                return false;
+
             CreateEnvironmentBlock(out env, primaryToken, false);
 
             var startupInfo = new STARTUPINFO

@@ -5,6 +5,9 @@ using System.Globalization;
 using System.IO;
 using System.IO.Pipes;
 using System.Runtime.InteropServices;
+using System.Security.AccessControl;
+using System.Security.Principal;
+using System.Threading;
 using System.Text;
 using System.Text.Json;
 
@@ -13,30 +16,60 @@ namespace PrivilegedHelper;
 internal static class Program
 {
     private static readonly Encoding PipeEncoding = new UTF8Encoding(false);
-    private static readonly IScreenCapturer Capturer = new ScreenCapturerDesktopDuplication();
-    private static readonly IFrameEncoder Encoder = new JpegFrameEncoder(50, 1024);
+    private static readonly Lazy<IScreenCapturer> CapturerLazy = new(() => new ScreenCapturerDesktopDuplication(), LazyThreadSafetyMode.ExecutionAndPublication);
+    private static readonly Lazy<IFrameEncoder> EncoderLazy = new(() => new JpegFrameEncoder(50, 1024), LazyThreadSafetyMode.ExecutionAndPublication);
+    private static readonly ConnectionLogger Logger = new("privileged-helper.log");
     private static bool _sessionActive;
     private static string? _accessCode;
 
     [STAThread]
     private static async Task Main(string[] args)
     {
-        var pipeName = RemoteSupportPipe.PipeName;
-        if (args.Length >= 2 && string.Equals(args[0], "--pipe", StringComparison.OrdinalIgnoreCase))
+        try
         {
-            pipeName = args[1];
-        }
+            var pipeName = RemoteSupportPipe.PipeName;
+            if (args.Length >= 2 && string.Equals(args[0], "--pipe", StringComparison.OrdinalIgnoreCase))
+            {
+                pipeName = args[1];
+            }
 
-        await RunServerAsync(pipeName, CancellationToken.None);
+            Logger.Log($"PrivilegedHelper starting. Pipe={pipeName} BaseDir={AppContext.BaseDirectory}");
+            await RunServerAsync(pipeName, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            Logger.Log($"PrivilegedHelper fatal error: {ex}");
+            throw;
+        }
     }
 
     private static async Task RunServerAsync(string pipeName, CancellationToken token)
     {
+        var pipeSecurity = new PipeSecurity();
+        pipeSecurity.AddAccessRule(new PipeAccessRule(new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null), PipeAccessRights.FullControl, AccessControlType.Allow));
+        pipeSecurity.AddAccessRule(new PipeAccessRule(new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null), PipeAccessRights.FullControl, AccessControlType.Allow));
+        pipeSecurity.AddAccessRule(new PipeAccessRule(new SecurityIdentifier(WellKnownSidType.AuthenticatedUserSid, null), PipeAccessRights.ReadWrite, AccessControlType.Allow));
+
         while (!token.IsCancellationRequested)
         {
-            using var pipe = new NamedPipeServerStream(pipeName, PipeDirection.InOut, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
-            await pipe.WaitForConnectionAsync(token);
-            await HandleConnectionAsync(pipe, token);
+            using var pipe = NamedPipeServerStreamAcl.Create(pipeName, PipeDirection.InOut, 5, PipeTransmissionMode.Byte, PipeOptions.Asynchronous, 0, 0, pipeSecurity, HandleInheritability.None);
+            try
+            {
+                Logger.Log("Waiting for pipe connection...");
+                await pipe.WaitForConnectionAsync(token);
+                Logger.Log("Pipe connected.");
+                await HandleConnectionAsync(pipe, token);
+                Logger.Log("Pipe disconnected.");
+            }
+            catch (OperationCanceledException)
+            {
+                Logger.Log("Pipe wait canceled.");
+                break;
+            }
+            catch (Exception ex)
+            {
+                Logger.Log($"Pipe loop error: {ex.Message}");
+            }
         }
     }
 
@@ -55,6 +88,7 @@ internal static class Program
             }
             catch
             {
+                Logger.Log("Bad request received (invalid JSON).");
                 await WriteResponseAsync(pipe, new RemoteSupportResponse("ERROR", "BadRequest"), token);
                 continue;
             }
@@ -72,11 +106,13 @@ internal static class Program
                     break;
                 case "StartSession":
                     HandleStartSession(request.Payload);
+                    Logger.Log("Session started.");
                     await WriteResponseAsync(pipe, new RemoteSupportResponse("OK", "Started"), token);
                     break;
                 case "StopSession":
                     _sessionActive = false;
                     _accessCode = null;
+                    Logger.Log("Session stopped.");
                     await WriteResponseAsync(pipe, new RemoteSupportResponse("OK", "Stopped"), token);
                     break;
                 case "SendInput":
@@ -125,13 +161,13 @@ internal static class Program
     {
         try
         {
-            using var bmp = await Capturer.CaptureAsync();
-            return await Encoder.EncodeAsync(bmp);
+            using var bmp = await CapturerLazy.Value.CaptureAsync();
+            return await EncoderLazy.Value.EncodeAsync(bmp);
         }
         catch
         {
             using var fallback = new System.Drawing.Bitmap(1, 1);
-            return await Encoder.EncodeAsync(fallback);
+            return await EncoderLazy.Value.EncodeAsync(fallback);
         }
     }
 
@@ -213,79 +249,137 @@ internal static class Program
 
     private static void MoveMouseToNormalized(double x, double y)
     {
-        var bounds = System.Windows.Forms.Screen.PrimaryScreen?.Bounds ?? new System.Drawing.Rectangle(0, 0, 1920, 1080);
-        var px = (int)Math.Round(Math.Clamp(x, 0, 1) * (bounds.Width - 1)) + bounds.Left;
-        var py = (int)Math.Round(Math.Clamp(y, 0, 1) * (bounds.Height - 1)) + bounds.Top;
-        SetCursorPos(px, py);
+        ExecOnInputDesktop(() =>
+        {
+            var bounds = System.Windows.Forms.Screen.PrimaryScreen?.Bounds ?? new System.Drawing.Rectangle(0, 0, 1920, 1080);
+            var px = (int)Math.Round(Math.Clamp(x, 0, 1) * (bounds.Width - 1)) + bounds.Left;
+            var py = (int)Math.Round(Math.Clamp(y, 0, 1) * (bounds.Height - 1)) + bounds.Top;
+            SetCursorPos(px, py);
+        });
     }
 
     private static void SendMouseButton(string button, bool isDown, double x, double y)
     {
-        MoveMouseToNormalized(x, y);
-
-        uint flag = button switch
+        ExecOnInputDesktop(() =>
         {
-            "Left" => isDown ? MOUSEEVENTF_LEFTDOWN : MOUSEEVENTF_LEFTUP,
-            "Right" => isDown ? MOUSEEVENTF_RIGHTDOWN : MOUSEEVENTF_RIGHTUP,
-            "Middle" => isDown ? MOUSEEVENTF_MIDDLEDOWN : MOUSEEVENTF_MIDDLEUP,
-            _ => 0
-        };
+            MoveMouseToNormalized(x, y);
 
-        if (flag == 0)
-            return;
-
-        var input = new INPUT
-        {
-            type = INPUT_MOUSE,
-            U = new InputUnion
+            uint flag = button switch
             {
-                mi = new MOUSEINPUT
-                {
-                    dwFlags = flag
-                }
-            }
-        };
+                "Left" => isDown ? MOUSEEVENTF_LEFTDOWN : MOUSEEVENTF_LEFTUP,
+                "Right" => isDown ? MOUSEEVENTF_RIGHTDOWN : MOUSEEVENTF_RIGHTUP,
+                "Middle" => isDown ? MOUSEEVENTF_MIDDLEDOWN : MOUSEEVENTF_MIDDLEUP,
+                _ => 0
+            };
 
-        _ = SendInput(1, new[] { input }, Marshal.SizeOf<INPUT>());
+            if (flag == 0)
+                return;
+
+            var input = new INPUT
+            {
+                type = INPUT_MOUSE,
+                U = new InputUnion
+                {
+                    mi = new MOUSEINPUT
+                    {
+                        dwFlags = flag
+                    }
+                }
+            };
+
+            _ = SendInput(1, new[] { input }, Marshal.SizeOf<INPUT>());
+        });
     }
 
     private static void SendMouseWheel(int delta, double x, double y)
     {
-        MoveMouseToNormalized(x, y);
-
-        var input = new INPUT
+        ExecOnInputDesktop(() =>
         {
-            type = INPUT_MOUSE,
-            U = new InputUnion
-            {
-                mi = new MOUSEINPUT
-                {
-                    dwFlags = MOUSEEVENTF_WHEEL,
-                    mouseData = (uint)delta
-                }
-            }
-        };
+            MoveMouseToNormalized(x, y);
 
-        _ = SendInput(1, new[] { input }, Marshal.SizeOf<INPUT>());
+            var input = new INPUT
+            {
+                type = INPUT_MOUSE,
+                U = new InputUnion
+                {
+                    mi = new MOUSEINPUT
+                    {
+                        dwFlags = MOUSEEVENTF_WHEEL,
+                        mouseData = (uint)delta
+                    }
+                }
+            };
+
+            _ = SendInput(1, new[] { input }, Marshal.SizeOf<INPUT>());
+        });
     }
 
     private static void SendKey(ushort key, bool keyUp)
     {
-        var input = new INPUT
+        ExecOnInputDesktop(() =>
         {
-            type = INPUT_KEYBOARD,
-            U = new InputUnion
+            var input = new INPUT
             {
-                ki = new KEYBDINPUT
+                type = INPUT_KEYBOARD,
+                U = new InputUnion
                 {
-                    wVk = key,
-                    dwFlags = keyUp ? KEYEVENTF_KEYUP : 0
+                    ki = new KEYBDINPUT
+                    {
+                        wVk = key,
+                        dwFlags = keyUp ? KEYEVENTF_KEYUP : 0
+                    }
                 }
-            }
-        };
+            };
 
-        _ = SendInput(1, new[] { input }, Marshal.SizeOf<INPUT>());
+            _ = SendInput(1, new[] { input }, Marshal.SizeOf<INPUT>());
+        });
     }
+
+    private static void ExecOnInputDesktop(Action action)
+    {
+        var hThread = GetCurrentThreadId();
+        var hOriginalDesktop = GetThreadDesktop(hThread);
+        var hInputDesktop = OpenInputDesktop(0, false, GENERIC_ALL);
+
+        bool switched = false;
+        if (hInputDesktop != IntPtr.Zero && hInputDesktop != hOriginalDesktop)
+        {
+            switched = SetThreadDesktop(hInputDesktop);
+        }
+
+        try
+        {
+            action();
+        }
+        finally
+        {
+            if (switched)
+            {
+                SetThreadDesktop(hOriginalDesktop);
+            }
+            if (hInputDesktop != IntPtr.Zero)
+            {
+                CloseDesktop(hInputDesktop);
+            }
+        }
+    }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr OpenInputDesktop(uint dwFlags, bool fInherit, uint dwDesiredAccess);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool SetThreadDesktop(IntPtr hDesktop);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr GetThreadDesktop(uint dwThreadId);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool CloseDesktop(IntPtr hDesktop);
+
+    [DllImport("kernel32.dll")]
+    private static extern uint GetCurrentThreadId();
+
+    private const uint GENERIC_ALL = 0x10000000;
 
     private const uint INPUT_MOUSE = 0;
     private const uint INPUT_KEYBOARD = 1;
