@@ -1,11 +1,13 @@
 using RemoteCore;
 using RemoteCore.Implementations;
 using RemoteCore.Interfaces;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.IO.Pipes;
 using System.Runtime.InteropServices;
 using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Security.Principal;
 using System.Threading;
 using System.Text;
@@ -18,28 +20,54 @@ internal static class Program
     private static readonly Encoding PipeEncoding = new UTF8Encoding(false);
     private static readonly Lazy<IScreenCapturer> CapturerLazy = new(() => new ScreenCapturerDesktopDuplication(), LazyThreadSafetyMode.ExecutionAndPublication);
     private static readonly Lazy<IFrameEncoder> EncoderLazy = new(() => new JpegFrameEncoder(50, 1024), LazyThreadSafetyMode.ExecutionAndPublication);
-    private static readonly ConnectionLogger Logger = new("privileged-helper.log");
+    private static readonly ConnectionLogger Logger = new(GetLogPath());
     private static bool _sessionActive;
     private static string? _accessCode;
+
+    private static string GetLogPath()
+    {
+        try
+        {
+            var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "ScreenDash", "Logs");
+            Directory.CreateDirectory(dir);
+            return Path.Combine(dir, "privileged-helper.log");
+        }
+        catch
+        {
+            return "privileged-helper.log";
+        }
+    }
 
     [STAThread]
     private static async Task Main(string[] args)
     {
+        var pipeName = RemoteSupportPipe.PipeName;
+        if (args.Length >= 2 && string.Equals(args[0], "--pipe", StringComparison.OrdinalIgnoreCase))
+        {
+            pipeName = args[1];
+        }
+
+        Logger.Log($"PrivilegedHelper starting. Pipe={pipeName} BaseDir={AppContext.BaseDirectory}");
         try
         {
-            var pipeName = RemoteSupportPipe.PipeName;
-            if (args.Length >= 2 && string.Equals(args[0], "--pipe", StringComparison.OrdinalIgnoreCase))
-            {
-                pipeName = args[1];
-            }
-
-            Logger.Log($"PrivilegedHelper starting. Pipe={pipeName} BaseDir={AppContext.BaseDirectory}");
-            await RunServerAsync(pipeName, CancellationToken.None);
+            Logger.Log($"Identity={WindowsIdentity.GetCurrent().Name} Session={Process.GetCurrentProcess().SessionId} Cwd={Environment.CurrentDirectory}");
         }
         catch (Exception ex)
         {
-            Logger.Log($"PrivilegedHelper fatal error: {ex}");
-            throw;
+            Logger.Log($"Failed to log startup identity/session/cwd: {ex}");
+        }
+
+        while (true)
+        {
+            try
+            {
+                await RunServerAsync(pipeName, CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                Logger.Log($"PrivilegedHelper loop error: {ex}");
+                await Task.Delay(TimeSpan.FromSeconds(1));
+            }
         }
     }
 
@@ -52,9 +80,10 @@ internal static class Program
 
         while (!token.IsCancellationRequested)
         {
-            using var pipe = NamedPipeServerStreamAcl.Create(pipeName, PipeDirection.InOut, 5, PipeTransmissionMode.Byte, PipeOptions.Asynchronous, 0, 0, pipeSecurity, HandleInheritability.None);
+            NamedPipeServerStream? pipe = null;
             try
             {
+                pipe = NamedPipeServerStreamAcl.Create(pipeName, PipeDirection.InOut, 5, PipeTransmissionMode.Byte, PipeOptions.Asynchronous, 0, 0, pipeSecurity, HandleInheritability.None);
                 Logger.Log("Waiting for pipe connection...");
                 await pipe.WaitForConnectionAsync(token);
                 Logger.Log("Pipe connected.");
@@ -68,7 +97,19 @@ internal static class Program
             }
             catch (Exception ex)
             {
-                Logger.Log($"Pipe loop error: {ex.Message}");
+                Logger.Log($"Pipe loop error: {ex}");
+                try
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(1), token);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+            }
+            finally
+            {
+                pipe?.Dispose();
             }
         }
     }

@@ -11,6 +11,11 @@ builder.Services.AddWindowsService(options =>
     options.ServiceName = "ScreenDash.Privileged";
 });
 
+builder.Services.Configure<HostOptions>(options =>
+{
+    options.BackgroundServiceExceptionBehavior = BackgroundServiceExceptionBehavior.Ignore;
+});
+
 builder.Logging.AddEventLog();
 builder.Logging.AddSimpleConsole();
 builder.Services.AddHostedService<PrivilegedWorker>();

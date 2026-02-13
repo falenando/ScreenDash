@@ -1,6 +1,6 @@
 # Installer.Velopack
 
-Este projeto empacota o `RemoteSupport.Service` e o `RemoteSupport.Service.Agent` usando o Velopack oficial.
+Este projeto empacota o `PrivilegedService` e o `PrivilegedHelper` usando o Velopack oficial.
 
 - Repositório: https://github.com/velopack/velopack
 - Documentação: https://docs.velopack.io/

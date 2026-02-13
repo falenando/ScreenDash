@@ -24,8 +24,31 @@ public sealed class PrivilegedWorker : BackgroundService
     {
         _logger = logger;
         _pipeName = RemoteSupportPipe.PipeName;
-        _agentExePath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "PrivilegedHelper", "PrivilegedHelper.exe"));
+        _agentExePath = ResolveAgentExePath();
         LogInformation($"Privileged service configured. Pipe={_pipeName} AgentPath={_agentExePath} BaseDir={AppContext.BaseDirectory}");
+    }
+
+    private static string ResolveAgentExePath()
+    {
+        var baseDir = AppContext.BaseDirectory;
+        var candidates = new[]
+        {
+            // Expected layout: <current>\PrivilegedService\PrivilegedService.exe and <current>\PrivilegedHelper\PrivilegedHelper.exe
+            Path.GetFullPath(Path.Combine(baseDir, "..", "PrivilegedHelper", "PrivilegedHelper.exe")),
+            // Some packaging layouts may place helper beside the service.
+            Path.GetFullPath(Path.Combine(baseDir, "PrivilegedHelper.exe")),
+            // When invoked from Velopack hook folder.
+            Path.GetFullPath(Path.Combine(baseDir, "..", "..", "VelopackHooks", "PrivilegedHelper", "PrivilegedHelper.exe")),
+            Path.GetFullPath(Path.Combine(baseDir, "..", "VelopackHooks", "PrivilegedHelper", "PrivilegedHelper.exe"))
+        };
+
+        foreach (var candidate in candidates)
+        {
+            if (File.Exists(candidate))
+                return candidate;
+        }
+
+        return candidates[0];
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -36,13 +59,25 @@ public sealed class PrivilegedWorker : BackgroundService
         {
             while (!stoppingToken.IsCancellationRequested)
             {
-                EnsureAgentRunning();
+                try
+                {
+                    EnsureAgentRunning();
+                }
+                catch (Exception ex)
+                {
+                    LogWarning($"Privileged service loop error: {ex}");
+                }
+
                 await Task.Delay(TimeSpan.FromSeconds(1), stoppingToken);
             }
         }
         catch (OperationCanceledException)
         {
             // expected on stop
+        }
+        catch (Exception ex)
+        {
+            LogWarning($"Privileged service fatal error: {ex}");
         }
         finally
         {
@@ -77,14 +112,26 @@ public sealed class PrivilegedWorker : BackgroundService
             return;
         }
 
-        if (_agentProcess != null && !_agentProcess.HasExited)
+        if (_agentProcess != null)
         {
-            // If session changed, restart agent
-            if (_agentSessionId == activeSessionId)
+            if (!TryGetProcessState(_agentPid, out var hasExited, out var exitCode))
                 return;
 
-            LogInformation($"Active session changed from {_agentSessionId} to {activeSessionId}; restarting capture agent.");
-            StopAgent();
+            if (hasExited)
+            {
+                LogWarning($"Capture agent exited. PID={_agentPid} ExitCode={exitCode} Session={_agentSessionId}.");
+                _agentProcess = null;
+                _agentPid = 0;
+            }
+            else
+            {
+                // If session changed, restart agent
+                if (_agentSessionId == activeSessionId)
+                    return;
+
+                LogInformation($"Active session changed from {_agentSessionId} to {activeSessionId}; restarting capture agent.");
+                StopAgent();
+            }
         }
 
         // Avoid spawning duplicates if an agent already exists in the active session.
@@ -123,7 +170,7 @@ public sealed class PrivilegedWorker : BackgroundService
         var args = $"--pipe \"{_pipeName}\"";
         LogInformation($"Starting capture agent. Session={activeSessionId} Args={args}");
 
-        if (_launcher.TryStartAsSystemInSession(activeSessionId, _agentExePath, args, out var systemProcess, out var systemError))
+        if (_launcher.TryStartAsSystemInSession(activeSessionId, _agentExePath, args, "winsta0\\default", out var systemProcess, out var systemError))
         {
             _agentProcess = systemProcess;
             _agentSessionId = activeSessionId;
@@ -135,6 +182,19 @@ public sealed class PrivilegedWorker : BackgroundService
 
         if (!string.IsNullOrWhiteSpace(systemError))
             LogWarning($"Failed to start capture agent as SYSTEM in session {activeSessionId}: {systemError}");
+
+        if (_launcher.TryStartAsSystemInSession(activeSessionId, _agentExePath, args, "winsta0\\SecureDesktop", out var secureDesktopProcess, out var secureDesktopError))
+        {
+            _agentProcess = secureDesktopProcess;
+            _agentSessionId = activeSessionId;
+            _agentPid = secureDesktopProcess?.Id ?? 0;
+            _consecutiveStartFailures = 0;
+            LogInformation($"Capture agent started as SYSTEM in session {activeSessionId} on SecureDesktop. PID={_agentPid}.");
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(secureDesktopError))
+            LogWarning($"Failed to start capture agent as SYSTEM in session {activeSessionId} on SecureDesktop: {secureDesktopError}");
 
         if (_launcher.TryStartInActiveSession(_agentExePath, args, out var process, out var sessionId, out var error))
         {
@@ -160,6 +220,44 @@ public sealed class PrivilegedWorker : BackgroundService
     {
         _logger.LogWarning(message);
         _fileLogger.Log(message);
+    }
+
+    private bool TryGetProcessState(int pid, out bool hasExited, out int exitCode)
+    {
+        hasExited = false;
+        exitCode = 0;
+
+        try
+        {
+            if (pid == 0)
+                return false;
+
+            try
+            {
+                using var existing = Process.GetProcessById(pid);
+                hasExited = existing.HasExited;
+                exitCode = hasExited ? existing.ExitCode : 0;
+                return true;
+            }
+            catch (ArgumentException)
+            {
+                hasExited = true;
+                exitCode = 0;
+                return true;
+            }
+            catch (InvalidOperationException ex)
+            {
+                LogWarning($"Capture agent process state unavailable for PID={pid}: {ex.Message}");
+                hasExited = false;
+                exitCode = 0;
+                return true;
+            }
+        }
+        catch (Exception ex)
+        {
+            LogWarning($"Capture agent process state check failed for PID={pid}: {ex}");
+            return false;
+        }
     }
 
 

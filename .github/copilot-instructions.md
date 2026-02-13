@@ -3,6 +3,7 @@
 ## General Guidelines
 - First general instruction
 - Second general instruction
+- Evitar frases meta nas respostas; manter tom direto e impessoal.
 
 ## Code Style
 - Use specific formatting rules

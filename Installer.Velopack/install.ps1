@@ -54,7 +54,97 @@ function Write-InstallLog {
 }
 
 $serviceName = "ScreenDash.Privileged"
-$exePath = Join-Path $InstallDir "PrivilegedService\PrivilegedService.exe"
+$helperTaskName = "ScreenDash.PrivilegedHelper"
+
+function Resolve-HelperExePath {
+    param([string]$Dir)
+
+    $candidates = @(
+        (Join-Path $Dir "PrivilegedHelper\PrivilegedHelper.exe"),
+        (Join-Path $Dir "VelopackHooks\PrivilegedHelper\PrivilegedHelper.exe"),
+        (Join-Path $Dir "..\PrivilegedHelper\PrivilegedHelper.exe"),
+        (Join-Path $Dir "PrivilegedHelper.exe")
+    )
+
+    foreach ($candidate in $candidates) {
+        try {
+            $full = [System.IO.Path]::GetFullPath($candidate)
+            if (Test-Path $full) { return $full }
+        } catch {
+            # ignore
+        }
+    }
+
+    return $candidates[0]
+}
+
+function Install-HelperScheduledTask {
+    param(
+        [string]$TaskName,
+        [string]$HelperExePath
+    )
+
+    if (-not (Test-Path $HelperExePath)) {
+        Write-InstallLog "WARN: Helper executable not found at $HelperExePath. Skipping scheduled task install."
+        return
+    }
+
+    $escapedExe = $HelperExePath.Replace('"', '""')
+
+    # Create a per-user task (runs in the interactive session at logon). This avoids needing elevation at runtime.
+    # Run schtasks under the elevated installer context but targeting the currently installing user.
+    $runAsUser = "{0}\{1}" -f $env:USERDOMAIN, $env:USERNAME
+    if ([string]::IsNullOrWhiteSpace($env:USERDOMAIN)) {
+        $runAsUser = $env:USERNAME
+    }
+
+    $createArgs = @(
+        '/Create',
+        '/F',
+        '/TN', "\$TaskName",
+        '/SC', 'ONLOGON',
+        '/RL', 'LIMITED',
+        '/RU', $runAsUser,
+        '/TR', "`"$escapedExe`""
+    )
+
+    Write-InstallLog "Registering helper scheduled task: $TaskName => $HelperExePath"
+    $createOutput = & schtasks.exe @createArgs 2>&1
+    Write-InstallLog "schtasks /Create output: $createOutput"
+
+    # Best-effort immediate start; may fail if installer is running under a different token/session.
+    try {
+        $runOutput = & schtasks.exe /Run /TN "\$TaskName" 2>&1
+        Write-InstallLog "schtasks /Run output: $runOutput"
+    } catch {
+        Write-InstallLog "WARN: schtasks /Run failed: $_"
+    }
+}
+
+function Resolve-ServiceExePath {
+    param([string]$Dir)
+
+    $candidates = @(
+        (Join-Path $Dir "PrivilegedService\PrivilegedService.exe"),
+        (Join-Path $Dir "VelopackHooks\PrivilegedService\PrivilegedService.exe"),
+        (Join-Path $Dir "..\PrivilegedService\PrivilegedService.exe"),
+        (Join-Path $Dir "PrivilegedService.exe")
+    )
+
+    foreach ($candidate in $candidates) {
+        try {
+            $full = [System.IO.Path]::GetFullPath($candidate)
+            if (Test-Path $full) { return $full }
+        } catch {
+            # ignore
+        }
+    }
+
+    return $candidates[0]
+}
+
+$exePath = Resolve-ServiceExePath $InstallDir
+$exeDir = Split-Path -Parent $exePath
 
 $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $isAdmin) {
@@ -93,8 +183,13 @@ try {
     $descriptionOutput = sc.exe description $serviceName "ScreenDash Privileged Service" 2>&1
     Write-InstallLog "sc.exe description output: $descriptionOutput"
 
+    # Ensure the service has a stable working directory (helps with relative probing and native dependencies)
+    $configOutput = sc.exe config $serviceName AppDirectory= "`"$exeDir`"" 2>&1
+    Write-InstallLog "sc.exe config AppDirectory output: $configOutput"
+
     $startOutput = sc.exe start $serviceName 2>&1
     Write-InstallLog "sc.exe start output: $startOutput"
+
     Write-InstallLog "Install hook completed successfully."
 }
 catch {
