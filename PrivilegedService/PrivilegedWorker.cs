@@ -4,6 +4,7 @@ using RemoteCore;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
+using static System.Runtime.InteropServices.JavaScript.JSType;
 
 namespace PrivilegedService;
 
@@ -16,14 +17,18 @@ public sealed class PrivilegedWorker : BackgroundService
     private uint _agentSessionId;
     private int _agentPid;
     private DateTime _lastStartAttemptUtc;
+    private DateTime _suppressStartUntilUtc;
     private int _consecutiveStartFailures;
     private readonly string _agentExePath;
     private readonly string _pipeName;
+
+    private static readonly TimeSpan GracefulExitBackoff = TimeSpan.FromSeconds(15);
 
     public PrivilegedWorker(ILogger<PrivilegedWorker> logger)
     {
         _logger = logger;
         _pipeName = RemoteSupportPipe.PipeName;
+        LogInformation($"Tentativa direta");
         _agentExePath = ResolveAgentExePath();
         LogInformation($"Privileged service configured. Pipe={_pipeName} AgentPath={_agentExePath} BaseDir={AppContext.BaseDirectory}");
     }
@@ -45,11 +50,35 @@ public sealed class PrivilegedWorker : BackgroundService
         foreach (var candidate in candidates)
         {
             if (File.Exists(candidate))
+            {
+                try
+                {
+                    var startInfo = new ProcessStartInfo
+                    {
+                        FileName = candidate,                // ex: ...\PrivilegedHelper.exe
+                        Arguments = $"--pipe \"{RemoteSupportPipe.PipeName}\"",
+                        WorkingDirectory = Path.GetDirectoryName(candidate) ?? AppContext.BaseDirectory,
+                        UseShellExecute = false,
+                        CreateNoWindow = true
+                    };
+
+                    var process = Process.Start(startInfo);
+
+                    return candidate;
+                }
+                catch (Exception ex)
+                {
+        
+                    return candidate;
+                }
+
                 return candidate;
+            }
         }
 
         return candidates[0];
     }
+
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -120,6 +149,19 @@ public sealed class PrivilegedWorker : BackgroundService
             if (hasExited)
             {
                 LogWarning($"Capture agent exited. PID={_agentPid} ExitCode={exitCode} Session={_agentSessionId}.");
+
+                // ExitCode=0 is treated as a graceful shutdown (e.g. agent chose to quit because no session
+                // is ready yet, or it was asked to exit). Avoid tight restart loops that spam the Event Log.
+                if (exitCode == 0)
+                {
+                    _suppressStartUntilUtc = DateTime.UtcNow + GracefulExitBackoff;
+                    _consecutiveStartFailures = 0;
+                }
+                else
+                {
+                    _consecutiveStartFailures++;
+                }
+
                 _agentProcess = null;
                 _agentPid = 0;
             }
@@ -133,6 +175,9 @@ public sealed class PrivilegedWorker : BackgroundService
                 StopAgent();
             }
         }
+
+        if (DateTime.UtcNow < _suppressStartUntilUtc)
+            return;
 
         // Avoid spawning duplicates if an agent already exists in the active session.
         // This can happen if the service restarts and loses the Process handle.
