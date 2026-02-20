@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Security.Principal;
 
 namespace PrivilegedService;
 
@@ -15,6 +16,13 @@ internal sealed class SessionProcessLauncher
         "SeImpersonatePrivilege"
     ];
 
+    private readonly Action<string>? _log;
+
+    public SessionProcessLauncher(Action<string>? log = null)
+    {
+        _log = log;
+    }
+
     public bool TryStartAsSystemInSession(uint sessionId, string exePath, string arguments, out Process? process, out string? error)
         => TryStartAsSystemInSession(sessionId, exePath, arguments, "winsta0\\default", out process, out error);
 
@@ -22,6 +30,9 @@ internal sealed class SessionProcessLauncher
     {
         process = null;
         error = null;
+
+        Log($"TryStartAsSystemInSession: Session={sessionId} Desktop={desktopName} Exe={exePath} Args={arguments}");
+        try { Log($"LauncherIdentity={WindowsIdentity.GetCurrent().Name}"); } catch { }
 
         IntPtr processToken = IntPtr.Zero;
         IntPtr userToken = IntPtr.Zero;
@@ -35,6 +46,7 @@ internal sealed class SessionProcessLauncher
             if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ALL_ACCESS, out processToken))
             {
                 error = FormatWin32Error("OpenProcessToken");
+                Log(error);
                 return false;
             }
 
@@ -44,6 +56,7 @@ internal sealed class SessionProcessLauncher
             if (!DuplicateTokenEx(processToken, TOKEN_ALL_ACCESS, IntPtr.Zero, SECURITY_IMPERSONATION_LEVEL.SecurityImpersonation, TOKEN_TYPE.TokenPrimary, out primaryToken))
             {
                 error = FormatWin32Error("DuplicateTokenEx(processToken)");
+                Log(error);
                 return false;
             }
 
@@ -52,15 +65,18 @@ internal sealed class SessionProcessLauncher
                 // Fallback: CreateProcessAsUser can fail to set session id depending on token type.
                 // Use the interactive user token + CreateProcessWithTokenW for better reliability.
                 var setSessionErr = FormatWin32Error("SetTokenInformation(TokenSessionId)");
+                Log(setSessionErr);
                 if (!WTSQueryUserToken(sessionId, out userToken))
                 {
                     error = $"{setSessionErr}. {FormatWin32Error("WTSQueryUserToken")}";
+                    Log(error);
                     return false;
                 }
 
                 if (!DuplicateTokenEx(userToken, TOKEN_ALL_ACCESS, IntPtr.Zero, SECURITY_IMPERSONATION_LEVEL.SecurityImpersonation, TOKEN_TYPE.TokenPrimary, out systemToken))
                 {
                     error = $"{setSessionErr}. {FormatWin32Error("DuplicateTokenEx(userToken)")}";
+                    Log(error);
                     return false;
                 }
 
@@ -75,21 +91,28 @@ internal sealed class SessionProcessLauncher
 
                 var commandLineFallback = $"\"{exePath}\" {arguments}";
                 var currentDirectoryFallback = Path.GetDirectoryName(exePath);
+                Log("Launching via CreateProcessWithTokenW (fallback after SetTokenInformation failure).");
                 var successFallback = CreateProcessWithTokenW(systemToken, LOGON_WITH_PROFILE, null, commandLineFallback, CREATE_UNICODE_ENVIRONMENT | CREATE_NEW_CONSOLE, IntPtr.Zero, currentDirectoryFallback, ref startupInfoFallback, out processInfo);
                 if (!successFallback)
                 {
                     error = $"{setSessionErr}. {FormatWin32Error("CreateProcessWithTokenW")}";
+                    Log(error);
                     return false;
                 }
 
                 process = Process.GetProcessById((int)processInfo.dwProcessId);
+                Log($"Launch OK. PID={(int)processInfo.dwProcessId}");
                 return true;
             }
 
             if (!EnableRequiredPrivileges(primaryToken, out error))
                 return false;
 
-            CreateEnvironmentBlock(out env, primaryToken, false);
+            if (!CreateEnvironmentBlock(out env, primaryToken, false))
+            {
+                Log($"{FormatWin32Error("CreateEnvironmentBlock")} (continuing with null env)");
+                env = IntPtr.Zero;
+            }
 
             var startupInfo = new STARTUPINFO
             {
@@ -99,35 +122,42 @@ internal sealed class SessionProcessLauncher
 
             var commandLine = $"\"{exePath}\" {arguments}";
             var currentDirectory = Path.GetDirectoryName(exePath);
+            Log("Launching via CreateProcessAsUser.");
             var success = CreateProcessAsUser(primaryToken, null, commandLine, IntPtr.Zero, IntPtr.Zero, false, CREATE_UNICODE_ENVIRONMENT | CREATE_NEW_CONSOLE, env, currentDirectory, ref startupInfo, out processInfo);
             if (!success)
             {
                 // Fallback using interactive session token via CreateProcessWithTokenW (often works when CreateProcessAsUser is blocked)
                 var createErr = FormatWin32Error("CreateProcessAsUser");
+                Log(createErr);
                 if (!WTSQueryUserToken(sessionId, out userToken))
                 {
                     error = $"{createErr}. {FormatWin32Error("WTSQueryUserToken")}";
+                    Log(error);
                     return false;
                 }
 
                 if (!DuplicateTokenEx(userToken, TOKEN_ALL_ACCESS, IntPtr.Zero, SECURITY_IMPERSONATION_LEVEL.SecurityImpersonation, TOKEN_TYPE.TokenPrimary, out systemToken))
                 {
                     error = $"{createErr}. {FormatWin32Error("DuplicateTokenEx(userToken)")}";
+                    Log(error);
                     return false;
                 }
 
                 if (!EnableRequiredPrivileges(systemToken, out error))
                     return false;
 
+                Log("Launching via CreateProcessWithTokenW (fallback after CreateProcessAsUser failure).");
                 var successFallback = CreateProcessWithTokenW(systemToken, LOGON_WITH_PROFILE, null, commandLine, CREATE_UNICODE_ENVIRONMENT | CREATE_NEW_CONSOLE, IntPtr.Zero, currentDirectory, ref startupInfo, out processInfo);
                 if (!successFallback)
                 {
                     error = $"{createErr}. {FormatWin32Error("CreateProcessWithTokenW")}";
+                    Log(error);
                     return false;
                 }
             }
 
             process = Process.GetProcessById((int)processInfo.dwProcessId);
+            Log($"Launch OK. PID={(int)processInfo.dwProcessId}");
             return true;
         }
         finally
@@ -154,15 +184,19 @@ internal sealed class SessionProcessLauncher
         process = null;
         error = null;
         sessionId = WTSGetActiveConsoleSessionId();
+
+        Log($"TryStartInActiveSession: ActiveSession={sessionId} Exe={exePath} Args={arguments}");
         if (sessionId == 0xFFFFFFFF)
         {
             error = "No active console session.";
+            Log(error);
             return false;
         }
 
         if (!WTSQueryUserToken(sessionId, out var userToken))
         {
             error = FormatWin32Error("WTSQueryUserToken");
+            Log(error);
             return false;
         }
 
@@ -176,6 +210,7 @@ internal sealed class SessionProcessLauncher
             if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, out processToken))
             {
                 error = FormatWin32Error("OpenProcessToken");
+                Log(error);
                 return false;
             }
 
@@ -185,13 +220,18 @@ internal sealed class SessionProcessLauncher
             if (!DuplicateTokenEx(userToken, TOKEN_ASSIGN_PRIMARY | TOKEN_DUPLICATE | TOKEN_QUERY | TOKEN_ADJUST_DEFAULT | TOKEN_ADJUST_SESSIONID, IntPtr.Zero, SECURITY_IMPERSONATION_LEVEL.SecurityImpersonation, TOKEN_TYPE.TokenPrimary, out primaryToken))
             {
                 error = FormatWin32Error("DuplicateTokenEx(userToken)");
+                Log(error);
                 return false;
             }
 
             if (!EnableRequiredPrivileges(primaryToken, out error))
                 return false;
 
-            CreateEnvironmentBlock(out env, primaryToken, false);
+            if (!CreateEnvironmentBlock(out env, primaryToken, false))
+            {
+                Log($"{FormatWin32Error("CreateEnvironmentBlock")} (continuing with null env)");
+                env = IntPtr.Zero;
+            }
 
             var startupInfo = new STARTUPINFO
             {
@@ -201,14 +241,17 @@ internal sealed class SessionProcessLauncher
 
             var commandLine = $"\"{exePath}\" {arguments}";
             var currentDirectory = Path.GetDirectoryName(exePath);
+            Log("Launching via CreateProcessAsUser (active session).");
             var success = CreateProcessAsUser(primaryToken, null, commandLine, IntPtr.Zero, IntPtr.Zero, false, CREATE_UNICODE_ENVIRONMENT | CREATE_NEW_CONSOLE, env, currentDirectory, ref startupInfo, out processInfo);
             if (!success)
             {
                 error = FormatWin32Error("CreateProcessAsUser");
+                Log(error);
                 return false;
             }
 
             process = Process.GetProcessById((int)processInfo.dwProcessId);
+            Log($"Launch OK. PID={(int)processInfo.dwProcessId}");
             return true;
         }
         finally
@@ -276,6 +319,7 @@ internal sealed class SessionProcessLauncher
     private const uint TOKEN_ALL_ACCESS = 0x000F01FF;
     private const uint CREATE_UNICODE_ENVIRONMENT = 0x00000400;
     private const uint CREATE_NEW_CONSOLE = 0x00000010;
+    private const uint CREATE_NO_WINDOW = 0x08000000;
     private const uint LOGON_WITH_PROFILE = 0x00000001;
     private const uint SE_PRIVILEGE_ENABLED = 0x00000002;
     private const int ERROR_NOT_ALL_ASSIGNED = 1300;
@@ -421,4 +465,6 @@ internal sealed class SessionProcessLauncher
         var code = Marshal.GetLastWin32Error();
         return $"{api} failed. Win32={code} ({new Win32Exception(code).Message})";
     }
+
+    private void Log(string message) => _log?.Invoke(message);
 }

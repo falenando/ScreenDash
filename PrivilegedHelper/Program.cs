@@ -1,6 +1,7 @@
 using RemoteCore;
 using RemoteCore.Implementations;
 using RemoteCore.Interfaces;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
@@ -47,14 +48,7 @@ internal static class Program
         }
 
         Logger.Log($"PrivilegedHelper starting. Pipe={pipeName} BaseDir={AppContext.BaseDirectory}");
-        try
-        {
-            Logger.Log($"Identity={WindowsIdentity.GetCurrent().Name} Session={Process.GetCurrentProcess().SessionId} Cwd={Environment.CurrentDirectory}");
-        }
-        catch (Exception ex)
-        {
-            Logger.Log($"Failed to log startup identity/session/cwd: {ex}");
-        }
+        LogStartupDiagnostics();
 
         while (true)
         {
@@ -69,6 +63,175 @@ internal static class Program
             }
         }
     }
+
+    private static void LogStartupDiagnostics()
+    {
+        try
+        {
+            Logger.Log($"UserInteractive={Environment.UserInteractive}");
+        }
+        catch { }
+
+        try
+        {
+            Logger.Log($"Identity={WindowsIdentity.GetCurrent().Name} Session={Process.GetCurrentProcess().SessionId} Pid={Environment.ProcessId} Cwd={Environment.CurrentDirectory}");
+        }
+        catch (Exception ex)
+        {
+            Logger.Log($"Failed to log identity/process/session/cwd: {ex}");
+        }
+
+        try
+        {
+            var tokenSessionId = TryGetTokenSessionId();
+            var tokenType = TryGetTokenType();
+            var elevated = TryGetTokenIsElevated();
+            Logger.Log($"Token: SessionId={tokenSessionId?.ToString() ?? "?"} Type={tokenType ?? "?"} IsElevated={elevated?.ToString() ?? "?"}");
+        }
+        catch (Exception ex)
+        {
+            Logger.Log($"Failed to log token diagnostics: {ex}");
+        }
+
+        try
+        {
+            var winSta = GetUserObjectNameSafe(GetProcessWindowStation());
+            var threadDesktop = GetUserObjectNameSafe(GetThreadDesktop(GetCurrentThreadId()));
+            var inputDesktop = GetInputDesktopNameSafe(out var inputDesktopErr);
+            Logger.Log($"Desktop: WinSta={winSta ?? "?"} ThreadDesktop={threadDesktop ?? "?"} InputDesktop={inputDesktop ?? "?"} InputDesktopErr={inputDesktopErr ?? "-"}");
+        }
+        catch (Exception ex)
+        {
+            Logger.Log($"Failed to log desktop diagnostics: {ex}");
+        }
+    }
+
+    private static uint? TryGetTokenSessionId()
+    {
+        var token = WindowsIdentity.GetCurrent().Token;
+
+        var size = sizeof(uint);
+        var mem = Marshal.AllocHGlobal(size);
+        try
+        {
+            if (!GetTokenInformation(token, TOKEN_INFORMATION_CLASS.TokenSessionId, mem, size, out _))
+                return null;
+
+            return (uint)Marshal.ReadInt32(mem);
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(mem);
+        }
+    }
+
+    private static string? TryGetTokenType()
+    {
+        var token = WindowsIdentity.GetCurrent().Token;
+
+        var size = sizeof(int);
+        var mem = Marshal.AllocHGlobal(size);
+        try
+        {
+            if (!GetTokenInformation(token, TOKEN_INFORMATION_CLASS.TokenType, mem, size, out _))
+                return null;
+
+            var type = Marshal.ReadInt32(mem);
+            return type switch
+            {
+                1 => "Primary",
+                2 => "Impersonation",
+                _ => type.ToString(CultureInfo.InvariantCulture)
+            };
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(mem);
+        }
+    }
+
+    private static bool? TryGetTokenIsElevated()
+    {
+        var token = WindowsIdentity.GetCurrent().Token;
+
+        var size = Marshal.SizeOf<TOKEN_ELEVATION>();
+        var mem = Marshal.AllocHGlobal(size);
+        try
+        {
+            if (!GetTokenInformation(token, TOKEN_INFORMATION_CLASS.TokenElevation, mem, size, out _))
+                return null;
+
+            var elevation = Marshal.PtrToStructure<TOKEN_ELEVATION>(mem);
+            return elevation.TokenIsElevated != 0;
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(mem);
+        }
+    }
+
+    private static string? GetInputDesktopNameSafe(out string? error)
+    {
+        error = null;
+
+        var hInputDesktop = OpenInputDesktop(0, false, DESKTOP_READOBJECTS);
+        if (hInputDesktop == IntPtr.Zero)
+        {
+            var code = Marshal.GetLastWin32Error();
+            error = $"OpenInputDesktop failed. Win32={code} ({new Win32Exception(code).Message})";
+            return null;
+        }
+
+        try
+        {
+            return GetUserObjectNameSafe(hInputDesktop);
+        }
+        finally
+        {
+            CloseDesktop(hInputDesktop);
+        }
+    }
+
+    private static string? GetUserObjectNameSafe(IntPtr handle)
+    {
+        if (handle == IntPtr.Zero)
+            return null;
+
+        var needed = 0;
+        _ = GetUserObjectInformation(handle, UOI_NAME, null, 0, ref needed);
+        if (needed <= 0)
+            return null;
+
+        var sb = new StringBuilder(needed);
+        if (!GetUserObjectInformation(handle, UOI_NAME, sb, sb.Capacity, ref needed))
+            return null;
+
+        return sb.ToString();
+    }
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool GetTokenInformation(IntPtr TokenHandle, TOKEN_INFORMATION_CLASS TokenInformationClass, IntPtr TokenInformation, int TokenInformationLength, out int ReturnLength);
+
+    private enum TOKEN_INFORMATION_CLASS
+    {
+        TokenType = 8,
+        TokenSessionId = 12,
+        TokenElevation = 20
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct TOKEN_ELEVATION
+    {
+        public int TokenIsElevated;
+    }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr GetProcessWindowStation();
+
+    [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern bool GetUserObjectInformation(IntPtr hObj, int nIndex, StringBuilder? pvInfo, int nLength, ref int lpnLengthNeeded);
+
+    private const int UOI_NAME = 2;
 
     private static async Task RunServerAsync(string pipeName, CancellationToken token)
     {
@@ -420,6 +583,7 @@ internal static class Program
     private static extern uint GetCurrentThreadId();
 
     private const uint GENERIC_ALL = 0x10000000;
+    private const uint DESKTOP_READOBJECTS = 0x0001;
 
     private const uint INPUT_MOUSE = 0;
     private const uint INPUT_KEYBOARD = 1;

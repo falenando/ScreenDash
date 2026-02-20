@@ -4,14 +4,13 @@ using RemoteCore;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
-using static System.Runtime.InteropServices.JavaScript.JSType;
 
 namespace PrivilegedService;
 
 public sealed class PrivilegedWorker : BackgroundService
 {
     private readonly ILogger<PrivilegedWorker> _logger;
-    private readonly SessionProcessLauncher _launcher = new();
+    private readonly SessionProcessLauncher _launcher;
     private readonly ConnectionLogger _fileLogger = new("privileged-service.log");
     private Process? _agentProcess;
     private uint _agentSessionId;
@@ -27,8 +26,8 @@ public sealed class PrivilegedWorker : BackgroundService
     public PrivilegedWorker(ILogger<PrivilegedWorker> logger)
     {
         _logger = logger;
+        _launcher = new SessionProcessLauncher(LogInformation);
         _pipeName = RemoteSupportPipe.PipeName;
-        LogInformation($"Tentativa direta");
         _agentExePath = ResolveAgentExePath();
         LogInformation($"Privileged service configured. Pipe={_pipeName} AgentPath={_agentExePath} BaseDir={AppContext.BaseDirectory}");
     }
@@ -51,27 +50,6 @@ public sealed class PrivilegedWorker : BackgroundService
         {
             if (File.Exists(candidate))
             {
-                try
-                {
-                    var startInfo = new ProcessStartInfo
-                    {
-                        FileName = candidate,                // ex: ...\PrivilegedHelper.exe
-                        Arguments = $"--pipe \"{RemoteSupportPipe.PipeName}\"",
-                        WorkingDirectory = Path.GetDirectoryName(candidate) ?? AppContext.BaseDirectory,
-                        UseShellExecute = false,
-                        CreateNoWindow = true
-                    };
-
-                    var process = Process.Start(startInfo);
-
-                    return candidate;
-                }
-                catch (Exception ex)
-                {
-        
-                    return candidate;
-                }
-
                 return candidate;
             }
         }
@@ -221,7 +199,19 @@ public sealed class PrivilegedWorker : BackgroundService
             _agentSessionId = activeSessionId;
             _agentPid = systemProcess?.Id ?? 0;
             _consecutiveStartFailures = 0;
-            LogInformation($"Capture agent started as SYSTEM in session {activeSessionId}. PID={_agentPid}.");
+
+            try
+            {
+                if (_agentProcess != null)
+                    LogInformation($"Capture agent started as SYSTEM in session {activeSessionId}. PID={_agentPid} ReportedSession={_agentProcess.SessionId}.");
+                else
+                    LogInformation($"Capture agent started as SYSTEM in session {activeSessionId}. PID={_agentPid}.");
+            }
+            catch
+            {
+                LogInformation($"Capture agent started as SYSTEM in session {activeSessionId}. PID={_agentPid}.");
+            }
+
             return;
         }
 
