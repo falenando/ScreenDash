@@ -21,6 +21,7 @@ internal static class Program
     private static readonly Lazy<IScreenCapturer> CapturerLazy = new(() => new ScreenCapturerDesktopDuplication(), LazyThreadSafetyMode.ExecutionAndPublication);
     private static readonly Lazy<IFrameEncoder> EncoderLazy = new(() => new JpegFrameEncoder(50, 1024), LazyThreadSafetyMode.ExecutionAndPublication);
     private static readonly ConnectionLogger Logger = new(GetLogPath());
+    private const string EventLogSource = "ScreenDash.PrivilegedHelper";
     private static bool _sessionActive;
     private static string? _accessCode;
 
@@ -41,6 +42,8 @@ internal static class Program
     [STAThread]
     private static async Task Main(string[] args)
     {
+        RegisterGlobalCrashHandlers();
+
         var pipeName = RemoteSupportPipe.PipeName;
         if (args.Length >= 2 && string.Equals(args[0], "--pipe", StringComparison.OrdinalIgnoreCase))
         {
@@ -61,6 +64,80 @@ internal static class Program
                 Logger.Log($"PrivilegedHelper loop error: {ex}");
                 await Task.Delay(TimeSpan.FromSeconds(1));
             }
+        }
+    }
+
+    private static void RegisterGlobalCrashHandlers()
+    {
+        try
+        {
+            AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+            {
+                try
+                {
+                    var terminating = e.IsTerminating ? "true" : "false";
+                    var details = e.ExceptionObject is Exception ex ? ex.ToString() : e.ExceptionObject?.ToString() ?? "<null>";
+                    LogFatal($"UnhandledException (terminating={terminating}): {details}");
+                }
+                catch
+                {
+                    // ignore
+                }
+            };
+
+            TaskScheduler.UnobservedTaskException += (_, e) =>
+            {
+                try
+                {
+                    LogFatal($"UnobservedTaskException: {e.Exception}");
+                    e.SetObserved();
+                }
+                catch
+                {
+                    // ignore
+                }
+            };
+
+            AppDomain.CurrentDomain.ProcessExit += (_, _) =>
+            {
+                try
+                {
+                    Logger.Log($"ProcessExit. Pid={Environment.ProcessId}");
+                }
+                catch
+                {
+                    // ignore
+                }
+            };
+        }
+        catch
+        {
+            // ignore
+        }
+    }
+
+    private static void LogFatal(string message)
+    {
+        try { Logger.Log(message); } catch { }
+        try { TryWriteEventLog(message); } catch { }
+    }
+
+    private static void TryWriteEventLog(string message)
+    {
+        // Best-effort event log write without requiring managed EventLog package.
+        // Source might not be registered; Windows will still record the event, but may show "description not found".
+        var handle = RegisterEventSourceW(null, EventLogSource);
+        if (handle == IntPtr.Zero)
+            return;
+
+        try
+        {
+            var strings = new[] { message };
+            _ = ReportEventW(handle, EVENTLOG_ERROR_TYPE, 0, 1, IntPtr.Zero, (ushort)strings.Length, 0, strings, IntPtr.Zero);
+        }
+        finally
+        {
+            _ = DeregisterEventSource(handle);
         }
     }
 
@@ -581,6 +658,17 @@ internal static class Program
 
     [DllImport("kernel32.dll")]
     private static extern uint GetCurrentThreadId();
+
+    [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern IntPtr RegisterEventSourceW(string? lpUNCServerName, string lpSourceName);
+
+    [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern bool ReportEventW(IntPtr hEventLog, ushort wType, ushort wCategory, uint dwEventID, IntPtr lpUserSid, ushort wNumStrings, uint dwDataSize, string[] lpStrings, IntPtr lpRawData);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool DeregisterEventSource(IntPtr hEventLog);
+
+    private const ushort EVENTLOG_ERROR_TYPE = 0x0001;
 
     private const uint GENERIC_ALL = 0x10000000;
     private const uint DESKTOP_READOBJECTS = 0x0001;

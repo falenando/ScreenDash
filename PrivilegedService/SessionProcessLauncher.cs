@@ -24,12 +24,19 @@ internal sealed class SessionProcessLauncher
     }
 
     public bool TryStartAsSystemInSession(uint sessionId, string exePath, string arguments, out Process? process, out string? error)
-        => TryStartAsSystemInSession(sessionId, exePath, arguments, "winsta0\\default", out process, out error);
+        => TryStartAsSystemInSession(sessionId, exePath, arguments, "winsta0\\default", out process, out _, out error);
+
+    public bool TryStartAsSystemInSession(uint sessionId, string exePath, string arguments, out Process? process, out IntPtr processHandle, out string? error)
+        => TryStartAsSystemInSession(sessionId, exePath, arguments, "winsta0\\default", out process, out processHandle, out error);
 
     public bool TryStartAsSystemInSession(uint sessionId, string exePath, string arguments, string desktopName, out Process? process, out string? error)
+        => TryStartAsSystemInSession(sessionId, exePath, arguments, desktopName, out process, out _, out error);
+
+    public bool TryStartAsSystemInSession(uint sessionId, string exePath, string arguments, string desktopName, out Process? process, out IntPtr processHandle, out string? error)
     {
         process = null;
         error = null;
+        processHandle = IntPtr.Zero;
 
         Log($"TryStartAsSystemInSession: Session={sessionId} Desktop={desktopName} Exe={exePath} Args={arguments}");
         try { Log($"LauncherIdentity={WindowsIdentity.GetCurrent().Name}"); } catch { }
@@ -43,11 +50,23 @@ internal sealed class SessionProcessLauncher
 
         try
         {
-            if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ALL_ACCESS, out processToken))
+            // Prefer a SYSTEM token already bound to the interactive session (winlogon).
+            // This tends to behave closer to PsExec -i -s and avoids "session-only" tokens that die immediately.
+            if (!TryOpenWinlogonTokenForSession(sessionId, out processToken, out var winlogonTokenNote))
             {
-                error = FormatWin32Error("OpenProcessToken");
-                Log(error);
-                return false;
+                if (!string.IsNullOrWhiteSpace(winlogonTokenNote))
+                    Log(winlogonTokenNote);
+
+                if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ALL_ACCESS, out processToken))
+                {
+                    error = FormatWin32Error("OpenProcessToken(GetCurrentProcess)");
+                    Log(error);
+                    return false;
+                }
+            }
+            else
+            {
+                Log($"Using winlogon token for session {sessionId}.");
             }
 
             if (!EnableRequiredPrivileges(processToken, out error))
@@ -60,50 +79,8 @@ internal sealed class SessionProcessLauncher
                 return false;
             }
 
-            if (!SetTokenInformation(primaryToken, TOKEN_INFORMATION_CLASS.TokenSessionId, ref sessionId, sizeof(uint)))
-            {
-                // Fallback: CreateProcessAsUser can fail to set session id depending on token type.
-                // Use the interactive user token + CreateProcessWithTokenW for better reliability.
-                var setSessionErr = FormatWin32Error("SetTokenInformation(TokenSessionId)");
-                Log(setSessionErr);
-                if (!WTSQueryUserToken(sessionId, out userToken))
-                {
-                    error = $"{setSessionErr}. {FormatWin32Error("WTSQueryUserToken")}";
-                    Log(error);
-                    return false;
-                }
-
-                if (!DuplicateTokenEx(userToken, TOKEN_ALL_ACCESS, IntPtr.Zero, SECURITY_IMPERSONATION_LEVEL.SecurityImpersonation, TOKEN_TYPE.TokenPrimary, out systemToken))
-                {
-                    error = $"{setSessionErr}. {FormatWin32Error("DuplicateTokenEx(userToken)")}";
-                    Log(error);
-                    return false;
-                }
-
-                if (!EnableRequiredPrivileges(systemToken, out error))
-                    return false;
-
-                var startupInfoFallback = new STARTUPINFO
-                {
-                    cb = Marshal.SizeOf<STARTUPINFO>(),
-                    lpDesktop = desktopName
-                };
-
-                var commandLineFallback = $"\"{exePath}\" {arguments}";
-                var currentDirectoryFallback = Path.GetDirectoryName(exePath);
-                Log("Launching via CreateProcessWithTokenW (fallback after SetTokenInformation failure).");
-                var successFallback = CreateProcessWithTokenW(systemToken, LOGON_WITH_PROFILE, null, commandLineFallback, CREATE_UNICODE_ENVIRONMENT | CREATE_NEW_CONSOLE, IntPtr.Zero, currentDirectoryFallback, ref startupInfoFallback, out processInfo);
-                if (!successFallback)
-                {
-                    error = $"{setSessionErr}. {FormatWin32Error("CreateProcessWithTokenW")}";
-                    Log(error);
-                    return false;
-                }
-
-                process = Process.GetProcessById((int)processInfo.dwProcessId);
-                Log($"Launch OK. PID={(int)processInfo.dwProcessId}");
-                return true;
-            }
+            // For winlogon token this should already match; for the service token path we still need it.
+            _ = SetTokenInformation(primaryToken, TOKEN_INFORMATION_CLASS.TokenSessionId, ref sessionId, sizeof(uint));
 
             if (!EnableRequiredPrivileges(primaryToken, out error))
                 return false;
@@ -122,13 +99,27 @@ internal sealed class SessionProcessLauncher
 
             var commandLine = $"\"{exePath}\" {arguments}";
             var currentDirectory = Path.GetDirectoryName(exePath);
+
             Log("Launching via CreateProcessAsUser.");
-            var success = CreateProcessAsUser(primaryToken, null, commandLine, IntPtr.Zero, IntPtr.Zero, false, CREATE_UNICODE_ENVIRONMENT | CREATE_NEW_CONSOLE, env, currentDirectory, ref startupInfo, out processInfo);
+            var success = CreateProcessAsUser(
+                primaryToken,
+                null,
+                commandLine,
+                IntPtr.Zero,
+                IntPtr.Zero,
+                false,
+                CREATE_UNICODE_ENVIRONMENT | CREATE_NEW_CONSOLE,
+                env,
+                currentDirectory,
+                ref startupInfo,
+                out processInfo);
+
             if (!success)
             {
                 // Fallback using interactive session token via CreateProcessWithTokenW (often works when CreateProcessAsUser is blocked)
                 var createErr = FormatWin32Error("CreateProcessAsUser");
                 Log(createErr);
+
                 if (!WTSQueryUserToken(sessionId, out userToken))
                 {
                     error = $"{createErr}. {FormatWin32Error("WTSQueryUserToken")}";
@@ -147,7 +138,17 @@ internal sealed class SessionProcessLauncher
                     return false;
 
                 Log("Launching via CreateProcessWithTokenW (fallback after CreateProcessAsUser failure).");
-                var successFallback = CreateProcessWithTokenW(systemToken, LOGON_WITH_PROFILE, null, commandLine, CREATE_UNICODE_ENVIRONMENT | CREATE_NEW_CONSOLE, IntPtr.Zero, currentDirectory, ref startupInfo, out processInfo);
+                var successFallback = CreateProcessWithTokenW(
+                    systemToken,
+                    LOGON_WITH_PROFILE,
+                    null,
+                    commandLine,
+                    CREATE_UNICODE_ENVIRONMENT | CREATE_NEW_CONSOLE,
+                    IntPtr.Zero,
+                    currentDirectory,
+                    ref startupInfo,
+                    out processInfo);
+
                 if (!successFallback)
                 {
                     error = $"{createErr}. {FormatWin32Error("CreateProcessWithTokenW")}";
@@ -179,11 +180,70 @@ internal sealed class SessionProcessLauncher
         }
     }
 
+    private bool TryOpenWinlogonTokenForSession(uint sessionId, out IntPtr token, out string? note)
+    {
+        token = IntPtr.Zero;
+        note = null;
+
+        try
+        {
+            var candidates = Process.GetProcessesByName("winlogon");
+            foreach (var p in candidates)
+            {
+                try
+                {
+                    if ((uint)p.SessionId != sessionId)
+                        continue;
+
+                    var hProcess = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, (uint)p.Id);
+                    if (hProcess == IntPtr.Zero)
+                    {
+                        note = FormatWin32Error($"OpenProcess(winlogon:{p.Id})");
+                        return false;
+                    }
+
+                    try
+                    {
+                        if (!OpenProcessToken(hProcess, TOKEN_ALL_ACCESS, out token))
+                        {
+                            note = FormatWin32Error($"OpenProcessToken(winlogon:{p.Id})");
+                            token = IntPtr.Zero;
+                            return false;
+                        }
+
+                        return true;
+                    }
+                    finally
+                    {
+                        CloseHandle(hProcess);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    note = $"TryOpenWinlogonTokenForSession: failed to inspect winlogon process: {ex.Message}";
+                    // keep searching other instances
+                }
+            }
+
+            note = $"TryOpenWinlogonTokenForSession: winlogon not found for session {sessionId}.";
+            return false;
+        }
+        catch (Exception ex)
+        {
+            note = $"TryOpenWinlogonTokenForSession failed: {ex.Message}";
+            return false;
+        }
+    }
+
     public bool TryStartInActiveSession(string exePath, string arguments, out Process? process, out uint sessionId, out string? error)
+        => TryStartInActiveSession(exePath, arguments, out process, out sessionId, out _, out error);
+
+    public bool TryStartInActiveSession(string exePath, string arguments, out Process? process, out uint sessionId, out IntPtr processHandle, out string? error)
     {
         process = null;
         error = null;
         sessionId = WTSGetActiveConsoleSessionId();
+        processHandle = IntPtr.Zero;
 
         Log($"TryStartInActiveSession: ActiveSession={sessionId} Exe={exePath} Args={arguments}");
         if (sessionId == 0xFFFFFFFF)
@@ -250,13 +310,16 @@ internal sealed class SessionProcessLauncher
                 return false;
             }
 
+            LogExitIfProcessEnded(processInfo.hProcess, "CreateProcessAsUser (active session)");
+
+            processHandle = processInfo.hProcess;
             process = Process.GetProcessById((int)processInfo.dwProcessId);
             Log($"Launch OK. PID={(int)processInfo.dwProcessId}");
             return true;
         }
         finally
         {
-            if (processInfo.hProcess != IntPtr.Zero)
+            if (processInfo.hProcess != IntPtr.Zero && processHandle == IntPtr.Zero)
                 CloseHandle(processInfo.hProcess);
             if (processInfo.hThread != IntPtr.Zero)
                 CloseHandle(processInfo.hThread);
@@ -269,6 +332,21 @@ internal sealed class SessionProcessLauncher
             if (userToken != IntPtr.Zero)
                 CloseHandle(userToken);
         }
+    }
+
+    private void LogExitIfProcessEnded(IntPtr processHandle, string context)
+    {
+        if (processHandle == IntPtr.Zero)
+            return;
+
+        _ = WaitForSingleObject(processHandle, 1000);
+        if (!GetExitCodeProcess(processHandle, out var exitCode))
+            return;
+
+        if (exitCode == STILL_ACTIVE)
+            return;
+
+        Log($"Process exited immediately after {context}. ExitCode=0x{exitCode:X8} ({unchecked((int)exitCode)}).");
     }
 
     [DllImport("kernel32.dll")]
@@ -292,6 +370,15 @@ internal sealed class SessionProcessLauncher
     [DllImport("kernel32.dll")]
     private static extern IntPtr GetCurrentProcess();
 
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool GetExitCodeProcess(IntPtr hProcess, out uint lpExitCode);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern uint WaitForSingleObject(IntPtr hHandle, uint dwMilliseconds);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr OpenProcess(uint dwDesiredAccess, bool bInheritHandle, uint dwProcessId);
+
     [DllImport("userenv.dll", SetLastError = true)]
     private static extern bool CreateEnvironmentBlock(out IntPtr lpEnvironment, IntPtr hToken, bool bInherit);
 
@@ -310,6 +397,8 @@ internal sealed class SessionProcessLauncher
     [DllImport("advapi32.dll", SetLastError = true)]
     private static extern bool LookupPrivilegeValue(string? lpSystemName, string lpName, ref LUID lpLuid);
 
+    private const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+
     private const uint TOKEN_ASSIGN_PRIMARY = 0x0001;
     private const uint TOKEN_DUPLICATE = 0x0002;
     private const uint TOKEN_QUERY = 0x0008;
@@ -319,10 +408,10 @@ internal sealed class SessionProcessLauncher
     private const uint TOKEN_ALL_ACCESS = 0x000F01FF;
     private const uint CREATE_UNICODE_ENVIRONMENT = 0x00000400;
     private const uint CREATE_NEW_CONSOLE = 0x00000010;
-    private const uint CREATE_NO_WINDOW = 0x08000000;
     private const uint LOGON_WITH_PROFILE = 0x00000001;
     private const uint SE_PRIVILEGE_ENABLED = 0x00000002;
     private const int ERROR_NOT_ALL_ASSIGNED = 1300;
+    private const uint STILL_ACTIVE = 259;
 
     private enum TOKEN_TYPE
     {

@@ -13,6 +13,7 @@ public sealed class PrivilegedWorker : BackgroundService
     private readonly SessionProcessLauncher _launcher;
     private readonly ConnectionLogger _fileLogger = new("privileged-service.log");
     private Process? _agentProcess;
+    private IntPtr _agentProcessHandle;
     private uint _agentSessionId;
     private int _agentPid;
     private DateTime _lastStartAttemptUtc;
@@ -57,7 +58,6 @@ public sealed class PrivilegedWorker : BackgroundService
         return candidates[0];
     }
 
-
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         LogInformation("Privileged service started.");
@@ -98,7 +98,14 @@ public sealed class PrivilegedWorker : BackgroundService
         if (_agentProcess != null)
         {
             try { _agentProcess.Kill(); } catch { }
+            try { _agentProcess.Dispose(); } catch { }
             _agentProcess = null;
+        }
+
+        if (_agentProcessHandle != IntPtr.Zero)
+        {
+            _ = CloseHandle(_agentProcessHandle);
+            _agentProcessHandle = IntPtr.Zero;
         }
 
         _agentPid = 0;
@@ -121,7 +128,7 @@ public sealed class PrivilegedWorker : BackgroundService
 
         if (_agentProcess != null)
         {
-            if (!TryGetProcessState(_agentPid, out var hasExited, out var exitCode))
+            if (!TryGetProcessState(_agentProcess, _agentProcessHandle, _agentPid, out var hasExited, out var exitCode))
                 return;
 
             if (hasExited)
@@ -140,8 +147,14 @@ public sealed class PrivilegedWorker : BackgroundService
                     _consecutiveStartFailures++;
                 }
 
+                try { _agentProcess.Dispose(); } catch { }
                 _agentProcess = null;
                 _agentPid = 0;
+                if (_agentProcessHandle != IntPtr.Zero)
+                {
+                    _ = CloseHandle(_agentProcessHandle);
+                    _agentProcessHandle = IntPtr.Zero;
+                }
             }
             else
             {
@@ -193,9 +206,10 @@ public sealed class PrivilegedWorker : BackgroundService
         var args = $"--pipe \"{_pipeName}\"";
         LogInformation($"Starting capture agent. Session={activeSessionId} Args={args}");
 
-        if (_launcher.TryStartAsSystemInSession(activeSessionId, _agentExePath, args, "winsta0\\default", out var systemProcess, out var systemError))
+        if (_launcher.TryStartAsSystemInSession(activeSessionId, _agentExePath, args, "winsta0\\default", out var systemProcess, out var systemHandle, out var systemError))
         {
             _agentProcess = systemProcess;
+            _agentProcessHandle = systemHandle;
             _agentSessionId = activeSessionId;
             _agentPid = systemProcess?.Id ?? 0;
             _consecutiveStartFailures = 0;
@@ -218,9 +232,10 @@ public sealed class PrivilegedWorker : BackgroundService
         if (!string.IsNullOrWhiteSpace(systemError))
             LogWarning($"Failed to start capture agent as SYSTEM in session {activeSessionId}: {systemError}");
 
-        if (_launcher.TryStartAsSystemInSession(activeSessionId, _agentExePath, args, "winsta0\\SecureDesktop", out var secureDesktopProcess, out var secureDesktopError))
+        if (_launcher.TryStartAsSystemInSession(activeSessionId, _agentExePath, args, "winsta0\\SecureDesktop", out var secureDesktopProcess, out var secureDesktopHandle, out var secureDesktopError))
         {
             _agentProcess = secureDesktopProcess;
+            _agentProcessHandle = secureDesktopHandle;
             _agentSessionId = activeSessionId;
             _agentPid = secureDesktopProcess?.Id ?? 0;
             _consecutiveStartFailures = 0;
@@ -231,9 +246,10 @@ public sealed class PrivilegedWorker : BackgroundService
         if (!string.IsNullOrWhiteSpace(secureDesktopError))
             LogWarning($"Failed to start capture agent as SYSTEM in session {activeSessionId} on SecureDesktop: {secureDesktopError}");
 
-        if (_launcher.TryStartInActiveSession(_agentExePath, args, out var process, out var sessionId, out var error))
+        if (_launcher.TryStartInActiveSession(_agentExePath, args, out var process, out var sessionId, out var processHandle, out var error))
         {
             _agentProcess = process;
+            _agentProcessHandle = processHandle;
             _agentSessionId = sessionId;
             _agentPid = process?.Id ?? 0;
             _consecutiveStartFailures = 0;
@@ -257,7 +273,7 @@ public sealed class PrivilegedWorker : BackgroundService
         _fileLogger.Log(message);
     }
 
-    private bool TryGetProcessState(int pid, out bool hasExited, out int exitCode)
+    private bool TryGetProcessState(Process? process, IntPtr processHandle, int pid, out bool hasExited, out int exitCode)
     {
         hasExited = false;
         exitCode = 0;
@@ -266,6 +282,53 @@ public sealed class PrivilegedWorker : BackgroundService
         {
             if (pid == 0)
                 return false;
+
+            if (processHandle != IntPtr.Zero)
+            {
+                if (GetExitCodeProcess(processHandle, out var handleExitCode))
+                {
+                    if (handleExitCode != STILL_ACTIVE)
+                    {
+                        hasExited = true;
+                        exitCode = unchecked((int)handleExitCode);
+                        return true;
+                    }
+                }
+            }
+
+            if (process != null)
+            {
+                try
+                {
+                    process.Refresh();
+                    hasExited = process.HasExited;
+
+                    if (!hasExited)
+                    {
+                        exitCode = 0;
+                        return true;
+                    }
+
+                    try
+                    {
+                        exitCode = process.ExitCode;
+                    }
+                    catch (InvalidOperationException)
+                    {
+                        exitCode = int.MinValue;
+                    }
+
+                    return true;
+                }
+                catch (InvalidOperationException)
+                {
+                    // esperado em alguns casos; cai para lookup por PID sem poluir log
+                }
+                catch (Exception ex)
+                {
+                    LogWarning($"Capture agent process state unavailable via Process for PID={pid}: {ex.Message}");
+                }
+            }
 
             try
             {
@@ -277,7 +340,7 @@ public sealed class PrivilegedWorker : BackgroundService
             catch (ArgumentException)
             {
                 hasExited = true;
-                exitCode = 0;
+                exitCode = int.MinValue;
                 return true;
             }
             catch (InvalidOperationException ex)
@@ -295,7 +358,14 @@ public sealed class PrivilegedWorker : BackgroundService
         }
     }
 
-
     [DllImport("kernel32.dll")]
     private static extern uint WTSGetActiveConsoleSessionId();
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool GetExitCodeProcess(IntPtr hProcess, out uint lpExitCode);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool CloseHandle(IntPtr hObject);
+
+    private const uint STILL_ACTIVE = 259;
 }
